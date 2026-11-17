@@ -90,7 +90,11 @@ public class PortalController {
       @PathVariable String folio,
       Model m,
       jakarta.servlet.http.HttpSession session) {
-    m.addAttribute("turn", queue.heartbeat(user(a), folio));
+    var turn = queue.heartbeat(user(a), folio);
+    m.addAttribute("turn", turn);
+    m.addAttribute(
+        "queueFocused", List.of("En espera", "Atendiendo").contains(turn.get("estado_turno")));
+    m.addAttribute("focusedQueueLink", "/fila/" + folio);
     session.setAttribute("queue.folio", folio);
     return "fila";
   }
@@ -110,6 +114,8 @@ public class PortalController {
     if (!"Atendiendo".equals(turn.get("estado_turno")))
       throw new IllegalArgumentException("Espera a que llegue tu turno.");
     m.addAttribute("turn", turn);
+    m.addAttribute("queueFocused", true);
+    m.addAttribute("focusedQueueLink", "/fila/" + folio);
     m.addAttribute("groups", enrollments.offers(user(a), Db.number(turn, "id_convocatoria")));
     return "grupos";
   }

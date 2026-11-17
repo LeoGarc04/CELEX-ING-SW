@@ -68,6 +68,49 @@ public class LivePermissionsFilter extends OncePerRequestFilter {
       }
       var permissions =
           mx.ipn.esime.celex.service.Profiles.authorities(db, Db.number(rows.get(0), "id_usuario"));
+      if (permissions.stream().anyMatch(x -> x.getAuthority().equals("USUARIO"))) {
+        var active =
+            db.rows(
+                "SELECT f.folio,f.estado_turno,f.posicion_actual FROM fila_virtual f JOIN"
+                    + " convocatorias c ON c.id_convocatoria=f.id_convocatoria WHERE f.id_usuario=?"
+                    + " AND f.estado_turno IN ('En espera','Atendiendo') AND f.reserva_expira_en>?"
+                    + " AND c.estado<>'Cerrada' AND c.fecha_inicio_fila<=? AND c.fecha_fin_fila>?"
+                    + " ORDER BY CASE WHEN f.folio=? THEN 0 ELSE 1 END,f.fecha_ingreso,f.id_turno"
+                    + " LIMIT 1",
+                rows.get(0).get("id_usuario"),
+                java.time.LocalDateTime.now(clock),
+                java.time.LocalDateTime.now(clock),
+                java.time.LocalDateTime.now(clock),
+                Objects.toString(folio, ""));
+        if (!active.isEmpty()) {
+          var turn = active.get(0);
+          String queuePath = "/fila/" + turn.get("folio");
+          String path = req.getServletPath();
+          if (path.isEmpty()) path = req.getRequestURI().substring(req.getContextPath().length());
+          boolean read = req.getMethod().equals("GET") || req.getMethod().equals("HEAD");
+          boolean ready =
+              "Atendiendo".equals(turn.get("estado_turno"))
+                  || Db.number(turn, "posicion_actual") == 1;
+          req.setAttribute("queue.focused", true);
+          req.setAttribute("queue.path", queuePath);
+          boolean allowed =
+              path.startsWith("/css/")
+                  || path.startsWith("/js/")
+                  || Set.of("/salud", "/error", "/logout").contains(path)
+                  || (read && (path.equals(queuePath) || path.equals(queuePath + "/oferta")))
+                  || (req.getMethod().equals("POST") && path.equals(queuePath + "/latido"))
+                  || (ready
+                      && ((read && path.equals(queuePath + "/grupos"))
+                          || (req.getMethod().equals("POST")
+                              && path.equals(queuePath + "/grupo"))));
+          if (!allowed) {
+            res.setStatus(303);
+            res.setHeader("Location", req.getContextPath() + queuePath);
+            res.setHeader("Cache-Control", "no-store");
+            return;
+          }
+        }
+      }
       var updated =
           UsernamePasswordAuthenticationToken.authenticated(auth.getPrincipal(), null, permissions);
       updated.setDetails(auth.getDetails());

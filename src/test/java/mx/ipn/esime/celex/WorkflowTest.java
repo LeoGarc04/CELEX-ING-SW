@@ -479,7 +479,8 @@ class WorkflowTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].cupo_disponible").value(1));
     mvc.perform(get("/fila/" + fa + "/oferta").with(user("alumno2@example.invalid")))
-        .andExpect(status().isNotFound())
+        .andExpect(status().isSeeOther())
+        .andExpect(redirectedUrl("/fila/" + fb))
         .andExpect(
             content()
                 .string(
@@ -739,5 +740,99 @@ class WorkflowTest {
     mvc.perform(get("/panel").with(user("alumno2@example.invalid"))).andExpect(status().isOk());
     mvc.perform(get("/profesor").with(user("alumno1@example.invalid")))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void waitingRoomLocksSectionsAcrossSessionsWithoutChangingTurn() throws Exception {
+    int first = student(1), waiting = student(2), c = call(), other = call();
+    queue.join(first, c);
+    String folio = queue.join(waiting, c);
+    String path = "/fila/" + folio;
+    mvc.perform(get("/panel").with(user("alumno2@example.invalid")))
+        .andExpect(status().isSeeOther())
+        .andExpect(redirectedUrl(path));
+    mvc.perform(get("/recuperar").with(user("alumno2@example.invalid")))
+        .andExpect(status().isSeeOther())
+        .andExpect(redirectedUrl(path));
+    mvc.perform(get("/solicitud/123").with(user("alumno2@example.invalid")))
+        .andExpect(status().isSeeOther())
+        .andExpect(redirectedUrl(path));
+    mvc.perform(
+            post("/fila")
+                .with(user("alumno2@example.invalid"))
+                .with(csrf())
+                .param("convocatoria", String.valueOf(other)))
+        .andExpect(status().isSeeOther())
+        .andExpect(redirectedUrl(path));
+    mvc.perform(get(path + "/grupos").with(user("alumno2@example.invalid")))
+        .andExpect(status().isSeeOther())
+        .andExpect(redirectedUrl(path));
+    mvc.perform(
+            post(path + "/grupo")
+                .with(user("alumno2@example.invalid"))
+                .with(csrf())
+                .param("grupo", "1"))
+        .andExpect(status().isSeeOther())
+        .andExpect(redirectedUrl(path));
+    mvc.perform(get(path).with(user("alumno2@example.invalid")))
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("<aside"))))
+        .andExpect(
+            content()
+                .string(
+                    org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString(">Mi perfil</a>"))));
+    mvc.perform(post(path + "/latido").with(user("alumno2@example.invalid")).with(csrf()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.folio").value(folio))
+        .andExpect(jsonPath("$.posicion_actual").value(2));
+    mvc.perform(
+            get("/panel")
+                .session(new org.springframework.mock.web.MockHttpSession())
+                .with(user("alumno2@example.invalid")))
+        .andExpect(redirectedUrl(path));
+    assertEquals(1, db.rows("SELECT * FROM fila_virtual WHERE id_usuario=?", waiting).size());
+    mvc.perform(post("/logout").with(user("alumno2@example.invalid")).with(csrf()))
+        .andExpect(redirectedUrl("/login?logout"));
+  }
+
+  @Test
+  void turnSelectionRestoresNavigationAndClosedCallDoesNotTrapUser() throws Exception {
+    int u = student(1), c = call(), g = group(c, u, 1);
+    String folio = queue.join(u, c), path = "/fila/" + folio;
+    mvc.perform(get(path).with(user("alumno1@example.invalid"))).andExpect(status().isOk());
+    mvc.perform(get(path + "/grupos").with(user("alumno1@example.invalid")))
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("<aside"))));
+    mvc.perform(
+            post(path + "/grupo")
+                .with(user("alumno1@example.invalid"))
+                .with(csrf())
+                .param("grupo", String.valueOf(g)))
+        .andExpect(status().is3xxRedirection());
+    mvc.perform(get("/panel").with(user("alumno1@example.invalid")))
+        .andExpect(status().isOk())
+        .andExpect(content().string(org.hamcrest.Matchers.containsString("<aside")));
+    int second = call();
+    queue.join(u, second);
+    db.update("UPDATE convocatorias SET estado='Cerrada' WHERE id_convocatoria=?", second);
+    mvc.perform(get("/panel").with(user("alumno1@example.invalid"))).andExpect(status().isOk());
+  }
+
+  @Test
+  void administratorKeepsManagementAccessWhileOwnQueueIsFocused() throws Exception {
+    int u = student(1), c = call();
+    String folio = queue.join(u, c);
+    db.update("INSERT INTO roles_permisos(id_usuario,tipo_permiso) VALUES(?,'ADMIN')", u);
+    mvc.perform(get("/fila/" + folio).with(user("alumno1@example.invalid")))
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("<aside"))));
+    mvc.perform(get("/admin").with(user("alumno1@example.invalid"))).andExpect(status().isOk());
   }
 }

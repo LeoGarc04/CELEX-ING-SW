@@ -45,6 +45,7 @@ python3 scripts/crear_admin_local.py
 
 - Convocatorias con fechas de apertura, cierre y capacidad de fila configurables.
 - Prioridades: becarios por puntaje, externos con promedio mayor a 9, alumnos nuevos y resto. Los empates se resuelven por orden de ingreso.
+- Durante la espera el alumno permanece en una vista sin menú de secciones. Las direcciones de otras secciones vuelven a su fila activa; al confirmar grupo se recupera la navegación. El administrador conserva acceso a la gestión.
 - La conexión a la fila se renueva cada 20 segundos. La reserva vence después de tres minutos sin conexión.
 - Oferta por idioma, modalidad, nivel e historial. Inglés: Introductorio, Básico 1–5, Intermedio 1–5 y Avanzado 1–6.
 - Selección de grupo con control de cupo y validación de traslapes de profesor y aula.
@@ -102,7 +103,7 @@ Las pruebas generales usan H2 y no envían correos externos. Para la suite MySQL
 ./mvnw -Dtest=MySqlWorkflowTest test
 ```
 
-Esta suite crea y limpia tablas y prueba la restauración. No debe ejecutarse contra una base con datos reales. La última revisión de perfiles pasó 29 pruebas generales y 25 con MySQL; también se comprobó la pantalla de profesor en escritorio y móvil.
+Esta suite crea y limpia tablas y prueba la restauración. No debe ejecutarse contra una base con datos reales. La última revisión de perfiles pasó 32 pruebas generales y 28 con MySQL; también se comprobó la pantalla de profesor en escritorio y móvil.
 
 ## Archivos privados
 

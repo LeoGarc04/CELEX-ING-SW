@@ -1,3 +1,4 @@
+addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
 document.querySelector('[data-back]')?.addEventListener('click',()=>history.back());
 const filter=document.querySelector('#filter');
 const offerFilters=[...document.querySelectorAll('[data-offer-filter]')];

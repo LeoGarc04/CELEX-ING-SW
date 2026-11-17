@@ -1,5 +1,6 @@
 package mx.ipn.esime.celex.web;
 
+import java.util.Objects;
 import java.util.Set;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -26,6 +27,9 @@ public class PageContext {
       Authentication a,
       org.springframework.ui.Model m,
       jakarta.servlet.http.HttpServletRequest request) {
+    m.addAttribute("queueFocused", Boolean.TRUE.equals(request.getAttribute("queue.focused")));
+    m.addAttribute(
+        "focusedQueueLink", Objects.toString(request.getAttribute("queue.path"), "/panel"));
     m.addAttribute("publicTesting", publicTesting);
     m.addAttribute(
         "teacher",
