@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reinicia exclusivamente la instalación local de CELEX; no modifica datos."""
+"""Reinicio del servidor local de CELEX."""
 import os,shlex,signal,subprocess,sys,time
 from arrancar_local import ROOT,guard_private,launch
 

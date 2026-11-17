@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Configura y ejecuta CELEX con MySQL real. No carga datos de ejemplo."""
+"""Configuración e inicio local de CELEX."""
 from pathlib import Path
-import getpass, hashlib, json, os, re, signal, subprocess, sys, tempfile, time
+import getpass, hashlib, json, os, re, subprocess, sys, tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = ('usuarios','roles_permisos','verificaciones_codigo','convocatorias','idiomas','grupos','historial_academico','prioridades_usuario','fila_virtual','solicitudes_inscripcion','documentos_comprobantes','comprobantes_oficiales','bitacora_acciones')
@@ -69,7 +69,7 @@ def initialize(client, create_database):
     sql = (ROOT/'database/celex.sql').read_bytes()
     if hashlib.sha256(sql).hexdigest() != SCHEMA_HASH:
         raise ValueError('El SQL difiere del modelo revisado. Se conserva sin ejecutar hasta revisarlo.')
-    # Repeat the emptiness check immediately before executing any DDL.
+    # Comprobar que la base siga vacía antes de crear las tablas.
     exists = int(client.run("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='celex'"))
     if create_database and exists:
         raise ValueError('La base celex apareció durante la configuración; se conserva sin cambios.')
@@ -77,14 +77,14 @@ def initialize(client, create_database):
         count = int(client.run("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='celex'"))
         if count:
             raise ValueError('La base ya contiene tablas; se conserva sin cambios.')
-    print('\nSe inicializará celex con las 13 tablas exactas de database/celex.sql.')
+    print('\nSe creará el esquema de database/celex.sql.')
     print('No se cargarán usuarios, grupos ni otros datos de ejemplo.')
     if ask('Para autorizar esta creación escribe CREAR') != 'CREAR':
         raise ValueError('Creación cancelada. Puedes reanudar después sin repetir el acceso guardado.')
     if create_database:
         client.run('CREATE DATABASE celex CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;')
     client.run(sql.decode('utf-8'))
-    print('Base celex inicializada con las 13 tablas aprobadas.')
+    print('Base celex inicializada.')
 
 def configure_database():
     path = ROOT/'.celex-setup.json'
@@ -184,17 +184,7 @@ def save_configuration(db, mail):
 def launch():
     jar = ROOT/'target/celex-0.0.1-SNAPSHOT.jar'
     if not jar.exists():raise ValueError('Falta compilar el ejecutable antes de iniciar.')
-    demo = Path('/Users/leo/Documents/Codex/2026-11-10/referenced-chatgpt-conversation-this-is-an-2/work/demo/processes.json')
-    if demo.exists():
-        pid = json.loads(demo.read_text()).get('maven')
-        if pid:
-            current = subprocess.run(['/bin/ps','-p',str(pid),'-o','command='],capture_output=True,text=True).stdout
-            if '/work/demo/lib' in current and 'CelexApplication' in current:
-                os.kill(pid,signal.SIGTERM)
-                for _ in range(50):
-                    if subprocess.run(['/bin/ps','-p',str(pid)],stdout=subprocess.DEVNULL).returncode:break
-                    time.sleep(.1)
-    print('\nIniciando CELEX con MySQL real. Mantén esta ventana abierta.')
+    print('\nIniciando CELEX. Mantén esta ventana abierta.')
     print('Cuando aparezca “Started CelexApplication”, abre http://localhost:8080/login')
     print('Para detenerlo, presiona Control+C.\n')
     env = os.environ.copy()
@@ -208,9 +198,9 @@ def launch():
 
 def main():
     os.chdir(ROOT);(ROOT/'target').mkdir(exist_ok=True)
-    print('\nCELEX — configuración y arranque con MySQL real\n')
-    print('No se alterarán tablas existentes. Si falta la base, se pedirá autorización para inicializar el SQL aprobado.')
-    print('No se cargarán cuentas ni datos de demostración. Las contraseñas se ingresan solo aquí.\n')
+    print('\nCELEX — configuración e inicio\n')
+    print('Si la base no existe, se pedirá confirmación para crearla. Las tablas existentes se conservarán.')
+    print('Introduce las contraseñas en esta terminal.\n')
     config = ROOT/'application-local.properties';guard_private(config)
     if not config.exists():save_configuration(configure_database(),configure_mail())
     else:print('Se utilizará la configuración privada ya guardada, sin mostrar sus valores.')
@@ -219,6 +209,6 @@ def main():
 if __name__ == '__main__':
     try:sys.exit(main())
     except KeyboardInterrupt:
-        print('\nConfiguración interrumpida. Puedes volver a abrir el asistente para reanudar.');sys.exit(130)
+        print('\nConfiguración interrumpida. Ejecuta de nuevo el script para continuar.');sys.exit(130)
     except Exception as error:
         print('\nNo se inició el sistema:',str(error));input('\nPresiona Enter para cerrar.');sys.exit(1)

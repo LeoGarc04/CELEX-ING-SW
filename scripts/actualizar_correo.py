@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Actualiza solo el correo local; conserva la base, cuentas y demás configuración."""
+"""Configuración de la cuenta SMTP."""
 from pathlib import Path
 import os, shlex, signal, subprocess, sys, time
 from arrancar_local import ROOT, configure_mail, guard_private, properties_value, write_private, launch

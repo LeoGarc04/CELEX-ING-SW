@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publica la instalación real por un túnel temporal; ninguna credencial sale del archivo privado."""
+"""Publicación temporal de CELEX mediante Cloudflare Tunnel."""
 import os,re,signal,subprocess,sys,time,urllib.request,json,shlex
 from pathlib import Path
 from arrancar_local import ROOT,guard_private
@@ -45,7 +45,7 @@ def main():
      time.sleep(.5)
     else:raise ValueError('CELEX no quedó disponible a tiempo.')
     (logs/'publicacion.json').write_text(json.dumps({'url':url,'app':app.pid,'tunnel':tunnel.pid,'awake':awake.pid}))
-    print('\nCELEX REAL DISPONIBLE PARA PRUEBAS PÚBLICAS:\n'+url+'/login\n',flush=True)
+    print('\nCELEX DISPONIBLE PARA PRUEBAS PÚBLICAS:\n'+url+'/login\n',flush=True)
     print('Comparte el enlace. Conserva esta ventana abierta y la Mac conectada. Control+C detiene la publicación. El enlace cambiará al abrirlo de nuevo.',flush=True)
     subprocess.Popen(['/usr/bin/open','-a','Safari',url+'/login'])
     while app.poll() is None and tunnel.poll() is None:time.sleep(1)

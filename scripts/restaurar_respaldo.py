@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Restauración manual y explícita de un respaldo CELEX generado por la aplicación."""
+"""Restauración de la base y los documentos desde un respaldo de CELEX."""
 import argparse,getpass,os,re,subprocess,tempfile,zipfile,shutil,stat
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]

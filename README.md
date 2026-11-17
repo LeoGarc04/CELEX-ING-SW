@@ -1,95 +1,94 @@
 # CELEX · ESIME Culhuacán
 
-Sistema de registro e inscripción: Java 17, Spring Boot 4.1.2, Maven, Thymeleaf, Bootstrap local, JavaScript, Spring Security, Spring Data JPA/Hibernate y MySQL 8.0.46.
+Sistema de registro e inscripción a cursos de idiomas.
+
+**Tecnologías:** Java 17, Spring Boot 4.1.2, Maven, Thymeleaf, Bootstrap, JavaScript, Spring Security, Spring Data JPA y MySQL 8.0.46.
 
 ## Perfiles
 
-- **Usuario:** cuenta, fila virtual, inscripción, documentos y comprobante propios.
-- **Profesor:** grupos asignados por el administrador, alumnos con inscripción confirmada y registro de calificaciones de 0 a 100.
-- **Administrador:** convocatorias, oferta académica, usuarios, perfiles, profesores, historial, prioridades, becas, pagos, bitácora, reportes y respaldos.
+| Perfil | Funciones |
+|---|---|
+| Usuario | Registro, fila virtual, inscripción, documentos y comprobante propios. |
+| Profesor | Consulta de sus grupos y registro de calificaciones de alumnos confirmados. |
+| Administrador | Convocatorias, grupos, cuentas, profesores, historial, prioridades, becas, pagos, bitácora, reportes y respaldos. |
 
-Solo se reconocen estos tres perfiles. Los permisos administrativos anteriores ya no conceden acceso. Las cuentas nuevas son de usuario; el registro público no permite elegir un perfil privilegiado. La clasificación Comunidad IPN/Público general determina la cuota, no los permisos.
+Las cuentas nuevas tienen perfil Usuario. El administrador puede cambiarlo en **Perfiles y bitácora** y asignar grupos a profesores desde **Oferta académica**. El nombre del profesor en un grupo no sustituye la asignación de su cuenta.
 
-Una cuenta de profesor debe registrarse y verificar su correo. El administrador cambia su perfil en **Perfiles y bitácora** y asigna sus grupos en **Oferta académica**. Escribir un nombre en el campo profesor del grupo no concede acceso. Al cambiar ese nombre mediante la edición del grupo se retira la asignación de cuenta anterior. Los cambios de perfil y asignación se revalidan en cada petición.
+La clasificación IPN/Público general se utiliza para calcular cuotas y es independiente del perfil.
 
-## Modelo y arquitectura
+## Instalación
 
-`database/celex.sql` conserva las 13 tablas, columnas y relaciones aprobadas. El SQL incluido es el esquema, no una copia de datos de usuarios. Hibernate utiliza `ddl-auto=validate` en ejecución normal.
-
-Capas: `web` para controladores/formularios, `service` para reglas/transacciones, `repository` y `entity` para persistencia. Se conserva la entidad `usuario` y su repositorio JPA; las operaciones de concurrencia utilizan SQL parametrizado con JdbcClient y transacciones de Spring.
-
-Sin ampliar el modelo:
-
-- `roles_permisos` almacena los perfiles y las asignaciones de cuenta a grupo (`DOCENTE_GRUPO_<id>`). Estas asignaciones no son perfiles visibles.
-- `historial_academico` guarda calificación, acreditación, profesor responsable y fecha. La bitácora vincula cada registro docente con su grupo.
-- `observaciones_dictamen` guarda una estructura versionada con los dictámenes independientes de pago e identificación; se admiten dictámenes anteriores en texto.
-- La bitácora conserva también las decisiones de beca por alumno/convocatoria. Es información de negocio y debe respaldarse; no debe purgarse como un log temporal.
-- Los documentos se guardan en una carpeta privada y las tablas almacenan referencias opacas. No se publica la carpeta como recurso estático.
-
-Los documentos originales de requisitos, arquitectura y prototipo no se modificaron.
-
-## Configuración y arranque
-
-Requisitos: Java 17, Python 3 para los asistentes y MySQL 8.0.46. El manejo de permisos de archivos privados y los asistentes de publicación se probaron en macOS.
+Se requiere Java 17, Python 3 y MySQL. Los scripts de inicio y publicación están preparados para macOS.
 
 ```sh
 ./mvnw package
 python3 scripts/arrancar_local.py
 ```
 
-El asistente solicita las credenciales únicamente en la terminal, verifica MySQL/SMTP y guarda `application-local.properties` privado, excluido de Git. Si falta la base, requiere confirmación local antes de inicializar el SQL aprobado. No carga usuarios ni grupos de ejemplo. Con la configuración guardada no necesita volver a introducir las claves en cada inicio.
+El script verifica MySQL y SMTP, y guarda la configuración en `application-local.properties`, con permisos privados y excluido de Git. La creación inicial de la base requiere confirmación. El esquema está en `database/celex.sql`.
 
-Después del inicio, abrir `http://localhost:8080/login`. Para reiniciar la instalación local:
+Abre `http://localhost:8080/login`. Para reiniciar:
 
 ```sh
 python3 scripts/reiniciar_local.py
 ```
 
-También pueden configurarse variables de entorno usando `.env.example` como referencia y ejecutar `./mvnw spring-boot:run`. El archivo `.env` **no se carga automáticamente**: exporta las variables en la terminal o configúralas en el entorno del IDE.
+También puedes configurar las variables indicadas en `.env.example` y ejecutar `./mvnw spring-boot:run`. El archivo `.env` no se carga automáticamente: debes exportar las variables o configurarlas en el IDE. Para Gmail utiliza una contraseña de aplicación.
 
-Variables principales: `DB_URL`, `DB_USER`, `DB_PASSWORD`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`, `SMTP_AUTH`, `SMTP_TLS`, `IPN_DOMAINS`, `FEE_IPN`, `FEE_PUBLIC`, `CELEX_STORAGE`, `PUBLIC_URL`, `COOKIE_SECURE` y `PORT`. En Gmail se requiere contraseña de aplicación. Nunca introducir credenciales reales en archivos versionados.
-
-No hay cuentas administrativas ni contraseñas por defecto. Para designar al primer administrador, registrar y verificar su cuenta y ejecutar localmente:
+Para designar al primer administrador, registra y verifica su cuenta y ejecuta:
 
 ```sh
 python3 scripts/crear_admin_local.py
 ```
 
-El asistente requiere confirmación y solo permite la designación inicial cuando no existe administrador. Después los perfiles se gestionan desde el panel. El administrador no puede retirarse su propio perfil.
+## Inscripciones
 
-## Funciones y reglas
+- Convocatorias con fechas de apertura, cierre y capacidad de fila configurables.
+- Prioridades: becarios por puntaje, externos con promedio mayor a 9, alumnos nuevos y resto. Los empates se resuelven por orden de ingreso.
+- La conexión a la fila se renueva cada 20 segundos. La reserva vence después de tres minutos sin conexión.
+- Oferta por idioma, modalidad, nivel e historial. Inglés: Introductorio, Básico 1–5, Intermedio 1–5 y Avanzado 1–6.
+- Selección de grupo con control de cupo y validación de traslapes de profesor y aula.
+- Cuotas: IPN activo $620 MXN; público general y egresados $1,280 MXN. El examen de colocación es un concepto separado de $150 y no se cobra en este flujo.
+- Becas por alumno y convocatoria. La beca y la prioridad de fila se registran por separado.
+- Pago e identificación en PDF, JPG o PNG, hasta 2 MB por archivo.
+- Dictamen independiente de ambos documentos. Las correcciones tienen un plazo de dos días hábiles; al vencer se cancela la solicitud y se libera el cupo.
+- Comprobante PDF con QR, validación pública, reportes CSV y bitácora.
 
-- Registro y recuperación con códigos de un solo uso de 15 minutos; contraseñas BCrypt. Cinco fallos bloquean el acceso diez minutos.
-- Convocatorias con fechas, cierre manual y capacidad n configurable. Prioridad: becarios por puntaje, externos con promedio mayor a 9, alumnos nuevos y resto; desempate temporal. Se conserva el turno que ya está en atención.
-- Un alumno selecciona grupo a la vez por convocatoria. Los latidos cada 20 segundos renuevan la reserva durante tres minutos; el mantenimiento libera turnos vencidos. La estimación inicial de espera es orientativa y se ajusta con selecciones observadas.
-- Oferta filtrada por idioma, modalidad, nivel e historial. Inglés: Introductorio, Básico 1–5, Intermedio 1–5 y Avanzado 1–6. El siguiente nivel se asigna administrativamente.
-- Validación de traslapes de profesor/aula, transacciones y decremento condicionado para evitar sobrecupos. Las confirmaciones se procesan en orden de recepción en una instancia del servidor, conservando las reglas de turno y elegibilidad. No se promete coordinación FIFO entre varias instancias.
-- Cuotas autorizadas: IPN activo $620 MXN; público general y egresados $1,280 MXN. Dominio institucional: `alumno.ipn.mx`. El examen de colocación de $150 es un concepto separado y no se agrega automáticamente al curso.
-- Beca previa por alumno/convocatoria, aplicada a la solicitud antes del envío de documentos. Beneficiario tiene cuota cero; la prioridad de becario es una decisión independiente.
-- Comprobante e identificación PDF/JPG/PNG de hasta 2 MB cada uno, con comprobación de formato y acceso autorizado.
-- Dictámenes independientes: ambos documentos aprobados confirman y generan PDF/QR. El rechazo de un documento exige motivo y abre corrección de dos días hábiles. Se excluyen fines de semana y fechas configuradas en `CELEX_HOLIDAYS` (`AAAA-MM-DD` separadas por comas). Al vencer el plazo se cancela y libera cupo una sola vez.
-- Historial de calificaciones: 80 o más acredita. Los profesores solo califican alumnos confirmados en sus grupos; cada guardado conserva trazabilidad. No pueden gestionar pagos, becas, cuentas ni perfiles.
-- Reportes CSV, bitácora, PDF con QR y validación pública sin exponer CURP, correo ni documentos privados.
+Los días festivos se configuran en `CELEX_HOLIDAYS`, separados por comas y con formato `AAAA-MM-DD`. Una calificación de 80 o más acredita el nivel; la asignación del siguiente nivel corresponde al administrador.
 
-## Compartir pruebas por internet
+## Estructura y datos
 
-Para macOS, instalar el ejecutable oficial de `cloudflared` en `.tools/cloudflared` (carpeta excluida de Git). Con la aplicación compilada y la configuración privada guardada:
+El proyecto se organiza en `web`, `service`, `repository`, `entity` y `config`. El esquema contiene 13 tablas y Hibernate valida su estructura al iniciar.
+
+Los documentos se almacenan en una carpeta privada, indicada por `CELEX_STORAGE`; las tablas guardan sus referencias. Los perfiles y las asignaciones docentes utilizan `roles_permisos`. Los dictámenes de documentos se guardan como datos versionados en `observaciones_dictamen`.
+
+La bitácora vincula calificaciones con grupos y conserva decisiones de beca. Debe mantenerse junto con el historial académico en los respaldos.
+
+## Publicación para pruebas
+
+Instala `cloudflared` en `.tools/cloudflared` y ejecuta:
 
 ```sh
 python3 scripts/publicar_pruebas.py
 ```
 
-El asistente abre un túnel temporal y Safari con el enlace HTTPS, usa la base real y evita mantener dos instancias locales. Mantén la terminal abierta, la Mac encendida con tapa abierta e internet. Control+C detiene la publicación y conserva los datos.
+El script abre Safari con un enlace HTTPS temporal. Mantén la terminal abierta y la Mac encendida, con tapa abierta e internet. Control+C detiene la publicación.
 
-El enlace cambia al reiniciar y puede caducar tras una desconexión. Los QR emitidos contienen el enlace de ese momento: para comprobantes duraderos hace falta una dirección estable. Esta modalidad gratuita de pruebas no proporciona disponibilidad permanente ni SLA. GitHub almacena el código; subir el repositorio no inicia ni aloja el servidor Java/MySQL.
+El enlace cambia al reiniciar y puede caducar al perder conexión. Los QR emitidos conservan la dirección de ese momento. Para uso permanente se necesita alojamiento y una dirección estable; GitHub almacena el código, no ejecuta el servidor.
 
-## Respaldos y restauración
+## Respaldos
 
-Los respaldos están habilitados por defecto (`BACKUP_ENABLED=true`) cada domingo a las 03:00, zona America/Mexico_City, mientras la aplicación está encendida. El administrador puede crearlos y descargarlos desde el panel. Requieren `mysqldump`; su ruta predeterminada es `/usr/local/mysql/bin/mysqldump` y puede configurarse con `celex.backup.mysqldump`.
+El respaldo semanal se ejecuta los domingos a las 03:00, hora de Ciudad de México, mientras la aplicación esté encendida. Puede configurarse con `BACKUP_ENABLED` y `BACKUP_DIRECTORY`. El administrador también puede crear y descargar respaldos desde el panel.
 
-El ZIP incluye SQL y documentos privados. El acceso MySQL se toma de la configuración privada, usando un archivo temporal 0600 que se elimina y no entra en el ZIP; las claves no se pasan en argumentos. Deben definirse retención, copia externa y monitoreo antes de operar en producción.
+Se requiere `mysqldump`; su ruta se configura con `celex.backup.mysqldump`. El ZIP incluye SQL y documentos. Las credenciales se toman de la configuración privada y no se incluyen en el respaldo.
 
-Para restaurar: detener CELEX, conservar primero un respaldo actual y ejecutar `python3 scripts/restaurar_respaldo.py RUTA_DEL_ZIP`. La operación requiere un operador y confirmación explícita de la base que se reemplazará. Preserva los documentos anteriores en una carpeta privada aparte. La restauración se ensayó en MySQL desechable; no se restauró la base real como parte de las pruebas.
+Para restaurar, detén CELEX, conserva una copia actual y ejecuta:
+
+```sh
+python3 scripts/restaurar_respaldo.py RUTA_DEL_ZIP
+```
+
+La restauración solicita confirmación de la base que se reemplazará. Define retención, copia externa y monitoreo antes de operar con datos reales.
 
 ## Pruebas
 
@@ -97,20 +96,16 @@ Para restaurar: detener CELEX, conservar primero un respaldo actual y ejecutar `
 ./mvnw test
 ```
 
-Ejecuta pruebas H2 aisladas, sin credenciales reales ni correos externos. La suite MySQL se omite salvo configuración explícita. Última verificación de perfiles: 29 pruebas generales y 25 con MySQL aislado, sin fallos; también se revisó el profesor en navegador de escritorio y móvil.
-
-Para MySQL usa exclusivamente una base desechable `celex_test_suite` en 127.0.0.1, y define `CELEX_TEST_MYSQL_URL`, `CELEX_TEST_MYSQL_USER`, `CELEX_TEST_MYSQL_PASSWORD`:
+Las pruebas generales usan H2 y no envían correos externos. Para la suite MySQL, crea una base desechable `celex_test_suite` en 127.0.0.1 y define `CELEX_TEST_MYSQL_URL`, `CELEX_TEST_MYSQL_USER` y `CELEX_TEST_MYSQL_PASSWORD`:
 
 ```sh
 ./mvnw -Dtest=MySqlWorkflowTest test
 ```
 
-Las pruebas inicializan y limpian tablas, y ensayan restauración: **nunca apuntarlas a una base con datos reales**. Cubren registro, bloqueo, perfiles, aislamiento de grupos, calificaciones, fila, concurrencia, becas, documentos, correcciones, PDF y respaldo/restauración. La carga interna de 200 ingresos no sustituye una medición HTTP desde internet ni acredita disponibilidad de producción.
+Esta suite crea y limpia tablas y prueba la restauración. No debe ejecutarse contra una base con datos reales. La última revisión de perfiles pasó 29 pruebas generales y 25 con MySQL; también se comprobó la pantalla de profesor en escritorio y móvil.
 
-## Archivos excluidos
+## Archivos privados
 
-No se versionan credenciales locales, `.env`, archivos de usuarios, respaldos, `.tools/`, logs, `target/`, cachés Python ni `.DS_Store`. Los artefactos generados anteriormente seguidos se retiran del índice, conservando los archivos físicos. Bootstrap se distribuye localmente con su aviso de licencia.
+Git excluye credenciales, `.env`, documentos de usuarios, respaldos, logs, `.tools/`, `target/`, cachés Python y `.DS_Store`. Bootstrap conserva su aviso de licencia.
 
-## Límites que requieren validación operativa
-
-Disponibilidad durante toda la convocatoria, aceptación con usuarios, calendario festivo concreto, reglas de inactividad de Introductorio, tratamiento de comprobantes de becarios y dirección pública estable. La implementación y sus pruebas no equivalen a una certificación de producción.
+Antes de producción quedan por validar la disponibilidad, la aceptación con usuarios, el calendario festivo, las reglas de inactividad de Introductorio y el tratamiento de comprobantes de becarios. El control de orden de confirmaciones corresponde a una sola instancia del servidor.
