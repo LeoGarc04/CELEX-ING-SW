@@ -835,4 +835,129 @@ class WorkflowTest {
                 .string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("<aside"))));
     mvc.perform(get("/admin").with(user("alumno1@example.invalid"))).andExpect(status().isOk());
   }
+
+  @Test
+  void resumeActivationAfterDisconnectAndResendWithoutDuplicateAccount() throws Exception {
+    String email = "pendiente@example.invalid", password = "una-contraseña-segura";
+    accounts.register(
+        new Registration("Cuenta pendiente", "GAML000101HDFRNS09", "5555555555", email, password));
+    int id = Db.number(db.one("SELECT * FROM usuarios WHERE correo=?", email), "id_usuario");
+    var initial = db.one("SELECT * FROM verificaciones_codigo WHERE id_usuario=?", id);
+    String oldCode = (String) initial.get("codigo");
+    assertThrows(
+        org.springframework.security.authentication.DisabledException.class,
+        () ->
+            authentication.authenticate(
+                UsernamePasswordAuthenticationToken.unauthenticated(email, password)));
+    mvc.perform(get("/login"))
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .string(
+                    org.hamcrest.Matchers.containsString("Verificar cuenta o reenviar código")));
+    mvc.perform(get("/verificar"))
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .string(org.hamcrest.Matchers.containsString("Reenviar código de verificación")));
+    mvc.perform(
+            post("/verificar").with(csrf()).param("correo", email).param("codigo", "INCORRECTO"))
+        .andExpect(view().name("verificar"))
+        .andExpect(model().attributeExists("error"))
+        .andExpect(model().attribute("correo", email));
+    db.update(
+        "UPDATE verificaciones_codigo SET expira_en=? WHERE id_usuario=?",
+        LocalDateTime.now().plusMinutes(10),
+        id);
+    reset(mail);
+    mvc.perform(post("/reenviar").with(csrf()).param("correo", email))
+        .andExpect(status().isOk())
+        .andExpect(view().name("verificar"))
+        .andExpect(model().attribute("correo", email));
+    verify(mail, times(1)).send(eq(email), anyString(), anyString());
+    var latest =
+        db.one("SELECT * FROM verificaciones_codigo WHERE id_usuario=? AND usado=FALSE", id);
+    String newCode = (String) latest.get("codigo");
+    assertFalse(newCode.equals(oldCode));
+    assertTrue(
+        Rules.yes(
+            db.one(
+                    "SELECT * FROM verificaciones_codigo WHERE id_codigo=?",
+                    initial.get("id_codigo"))
+                .get("usado")));
+    mvc.perform(post("/reenviar").with(csrf()).param("correo", email)).andExpect(status().isOk());
+    verify(mail, times(1)).send(eq(email), anyString(), anyString());
+    mvc.perform(post("/verificar").with(csrf()).param("correo", email).param("codigo", oldCode))
+        .andExpect(view().name("verificar"))
+        .andExpect(model().attributeExists("error"));
+    mvc.perform(
+            post("/verificar")
+                .with(csrf())
+                .param("correo", email)
+                .param("codigo", newCode.toLowerCase(Locale.ROOT)))
+        .andExpect(view().name("login"));
+    assertEquals(
+        "Activa", db.one("SELECT * FROM usuarios WHERE id_usuario=?", id).get("estado_cuenta"));
+    assertEquals(1, db.rows("SELECT * FROM usuarios WHERE correo=?", email).size());
+    mvc.perform(post("/login").with(csrf()).param("username", email).param("password", password))
+        .andExpect(redirectedUrl("/panel"));
+    mvc.perform(post("/verificar").with(csrf()).param("correo", email).param("codigo", newCode))
+        .andExpect(view().name("verificar"))
+        .andExpect(model().attributeExists("error"));
+    reset(mail);
+    var active =
+        mvc.perform(post("/reenviar").with(csrf()).param("correo", email))
+            .andReturn()
+            .getModelAndView();
+    var unknown =
+        mvc.perform(post("/reenviar").with(csrf()).param("correo", "desconocido@example.invalid"))
+            .andReturn()
+            .getModelAndView();
+    assertEquals(active.getModel().get("message"), unknown.getModel().get("message"));
+    verifyNoInteractions(mail);
+  }
+
+  @Test
+  void failedResendKeepsPendingAccountAndPreviousCode() throws Exception {
+    String email = "reintento@example.invalid";
+    accounts.register(
+        new Registration(
+            "Cuenta pendiente",
+            "GAML000101HDFRNS09",
+            "5555555555",
+            email,
+            "una-contraseña-segura"));
+    int id = Db.number(db.one("SELECT * FROM usuarios WHERE correo=?", email), "id_usuario");
+    db.update(
+        "UPDATE verificaciones_codigo SET expira_en=? WHERE id_usuario=?",
+        LocalDateTime.now().plusMinutes(10),
+        id);
+    var original = db.one("SELECT * FROM verificaciones_codigo WHERE id_usuario=?", id);
+    reset(mail);
+    doThrow(new org.springframework.mail.MailSendException("fallo simulado"))
+        .when(mail)
+        .send(anyString(), anyString(), anyString());
+    mvc.perform(post("/reenviar").with(csrf()).param("correo", email))
+        .andExpect(status().isOk())
+        .andExpect(view().name("verificar"))
+        .andExpect(model().attributeExists("error"))
+        .andExpect(model().attribute("correo", email))
+        .andExpect(
+            content()
+                .string(org.hamcrest.Matchers.containsString("Reenviar código de verificación")));
+    assertEquals(
+        "Inactiva", db.one("SELECT * FROM usuarios WHERE id_usuario=?", id).get("estado_cuenta"));
+    assertEquals(1, db.rows("SELECT * FROM verificaciones_codigo WHERE id_usuario=?", id).size());
+    assertFalse(
+        Rules.yes(
+            db.one(
+                    "SELECT * FROM verificaciones_codigo WHERE id_codigo=?",
+                    original.get("id_codigo"))
+                .get("usado")));
+    reset(mail);
+    mvc.perform(post("/reenviar").with(csrf()).param("correo", email))
+        .andExpect(view().name("verificar"))
+        .andExpect(model().attributeDoesNotExist("error"));
+    verify(mail).send(eq(email), anyString(), anyString());
+  }
 }

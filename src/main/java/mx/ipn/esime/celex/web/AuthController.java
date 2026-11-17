@@ -48,15 +48,33 @@ public class AuthController {
 
   @PostMapping("/verificar")
   String verify(@RequestParam String correo, @RequestParam String codigo, Model m) {
-    accounts.verify(correo, codigo, null);
+    m.addAttribute("correo", correo);
+    try {
+      accounts.verify(correo, codigo.trim().toUpperCase(java.util.Locale.ROOT), null);
+    } catch (IllegalArgumentException e) {
+      m.addAttribute(
+          "error",
+          "El código no es válido o venció. Revisa el correo y el código, o solicita uno nuevo.");
+      return "verificar";
+    }
     m.addAttribute("message", "Cuenta activada. Ya puedes iniciar sesión.");
     return "login";
   }
 
   @PostMapping("/reenviar")
   String resend(@RequestParam String correo, Model m) {
-    accounts.requestActivation(correo);
     m.addAttribute("correo", correo);
+    try {
+      accounts.requestActivation(correo);
+    } catch (org.springframework.mail.MailException e) {
+      m.addAttribute(
+          "error",
+          "No se pudo enviar el correo. Espera un momento y vuelve a solicitar el código.");
+      return "verificar";
+    } catch (IllegalArgumentException e) {
+      m.addAttribute("error", e.getMessage());
+      return "verificar";
+    }
     m.addAttribute(
         "message",
         "Si la cuenta está pendiente y pasó un minuto desde el último envío, recibirás un nuevo"

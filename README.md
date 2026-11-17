@@ -27,7 +27,9 @@ python3 scripts/arrancar_local.py
 
 El script verifica MySQL y SMTP, y guarda la configuración en `application-local.properties`, con permisos privados y excluido de Git. La creación inicial de la base requiere confirmación. El esquema está en `database/celex.sql`.
 
-Abre `http://localhost:8080/login`. Para reiniciar:
+Abre `http://localhost:8080/login`. Si el registro se interrumpió, entra en **Verificar cuenta o reenviar código** para continuar con el mismo correo. Los códigos duran 15 minutos y el reenvío requiere esperar un minuto entre solicitudes.
+
+Para reiniciar:
 
 ```sh
 python3 scripts/reiniciar_local.py
@@ -103,7 +105,7 @@ Las pruebas generales usan H2 y no envían correos externos. Para la suite MySQL
 ./mvnw -Dtest=MySqlWorkflowTest test
 ```
 
-Esta suite crea y limpia tablas y prueba la restauración. No debe ejecutarse contra una base con datos reales. La última revisión de perfiles pasó 32 pruebas generales y 28 con MySQL; también se comprobó la pantalla de profesor en escritorio y móvil.
+Esta suite crea y limpia tablas y prueba la restauración. No debe ejecutarse contra una base con datos reales. La última revisión de perfiles pasó 34 pruebas generales y 30 con MySQL; también se comprobó la pantalla de profesor en escritorio y móvil.
 
 ## Archivos privados
 
