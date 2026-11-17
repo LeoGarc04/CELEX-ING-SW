@@ -1,0 +1,18 @@
+target/
+.DS_Store
+.env
+.env.*
+!.env.example
+application-local.properties
+storage/
+backups/
+*.log
+.celex-setup.json
+
+.tools/
+
+__pycache__/
+*.pyc
+
+# Copias privadas conservadas por la restauración
+storage-anterior-*/
