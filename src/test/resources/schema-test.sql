@@ -8,7 +8,8 @@
 CREATE TABLE usuarios (
     id_usuario INT AUTO_INCREMENT PRIMARY KEY,
     nombre_completo VARCHAR(150) NOT NULL,
-    curp VARCHAR(18) NOT NULL UNIQUE,
+    curp VARCHAR(18) NULL UNIQUE,
+    boleta VARCHAR(10) NULL UNIQUE,
     telefono VARCHAR(15) NOT NULL,
     correo VARCHAR(100) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,

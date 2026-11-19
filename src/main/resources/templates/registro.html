@@ -1,1 +1,40 @@
-<!DOCTYPE html><html lang="es" xmlns:th="http://www.thymeleaf.org"><head th:replace="~{layout :: head}"></head><body><header th:replace="~{layout :: header}"></header><div class="shell" th:classappend="${(!signedIn or queueFocused) ? 'user-layout' : ''}"><aside th:replace="~{layout :: sidebar}"></aside><main class="main"><div class="heading"><div><h1>Crear cuenta CELEX</h1><p>Este es el primer paso para participar en la convocatoria de inscripción.</p></div><span class="tag">Paso 1 · Cuenta</span></div><div class="flow"><span class="active">Cuenta</span><span>Fila</span><span>Grupo</span><span>Documentos</span><span>Confirmación</span></div><div class="notice">Primero registra y verifica tu cuenta. Después podrás iniciar sesión y continuar con la fila virtual.</div><div class="card entry-choice"><h2>¿Ya tienes una cuenta?</h2><p class="muted">Si ya te registraste anteriormente, puedes iniciar sesión directamente.</p><a class="button secondary" th:href="@{/login}">Iniciar sesión</a><a class="button secondary" th:href="@{/verificar}">Continuar verificación o reenviar código</a></div><div class="two"><section class="card"><h2>Datos del usuario</h2><form method="post" th:action="@{/registro}" th:object="${registration}" data-register><ul class="notice error" th:if="${#fields.hasErrors('*')}"><li th:each="e:${#fields.errors('*')}" th:text="${e}"></li></ul><div class="row"><div class="field"><label>Nombre completo<input class="input" name="nombre" required maxlength="150" th:value="*{nombre}" autocomplete="name"></label></div><div class="field"><label>CURP<input class="input" name="curp" required minlength="18" maxlength="18" th:value="*{curp}" aria-describedby="curpHelp"></label><small id="curpHelp" class="muted">Usa los 18 caracteres de tu CURP en mayúsculas.</small></div></div><div class="row"><div class="field"><label>Teléfono<input class="input" name="telefono" type="tel" required maxlength="15" th:value="*{telefono}" autocomplete="tel"></label></div><div class="field"><label>Clasificación automática</label><div class="notice ok">Comunidad IPN al verificar un correo <b>@alumno.ipn.mx</b>; en otro caso, Público general.</div></div></div><div class="field"><label>Correo electrónico<input class="input" name="correo" type="email" required maxlength="100" th:value="*{correo}" autocomplete="email"></label><small class="muted">El correo y la CURP deben ser únicos.</small></div><div class="row"><div class="field"><label>Contraseña<input class="input" name="password" type="password" minlength="12" maxlength="64" autocomplete="new-password" required></label><small class="muted">De 12 a 64 caracteres.</small></div><div class="field"><label>Confirmar contraseña<input class="input" name="confirm" type="password" minlength="12" maxlength="64" autocomplete="new-password" required></label></div></div><button class="btn primary" type="submit">Registrarme</button></form></section><section class="card"><h2>Verificación de cuenta</h2><p class="muted">Después de enviar el formulario recibirás un código en tu correo.</p><form method="post" th:action="@{/verificar}"><label>Correo registrado<input class="input" name="correo" type="email" autocomplete="email" required></label><label>Código de verificación<input class="input" name="codigo" maxlength="10" autocomplete="one-time-code" required></label><button class="btn secondary">Activar cuenta</button></form><a class="button secondary" th:href="@{/login}">Ya tengo una cuenta</a></section></div></main></div><footer>CELEX · ESIME Culhuacán</footer></body></html>
+<!DOCTYPE html>
+<html lang="es" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{layout :: head}"></head>
+<body>
+<header th:replace="~{layout :: header}"></header>
+<div class="shell" th:classappend="${(!signedIn or queueFocused) ? 'user-layout' : ''}">
+  <aside th:replace="~{layout :: sidebar}"></aside>
+  <main class="main">
+    <div class="heading"><div><h1>Crear cuenta CELEX</h1><p>Registra tus datos y verifica tu correo para continuar.</p></div><span class="tag">Paso 1 · Cuenta</span></div>
+    <div class="registration-layout">
+      <section class="card" th:unless="${registered}">
+        <h2>Datos del usuario</h2>
+        <form method="post" th:action="@{/registro}" th:object="${registration}" data-register>
+          <ul class="notice error" th:if="${#fields.hasAnyErrors()}"><li th:each="e:${#fields.allErrors()}" th:text="${e}"></li></ul>
+          <label>Apellidos y nombre(s)<input class="input" name="nombre" required maxlength="150" th:value="*{nombre}" autocomplete="name" placeholder="García López Ana María" aria-describedby="nombreHelp"></label>
+          <small id="nombreHelp" class="muted">Escribe apellido paterno, apellido materno y después nombre(s).</small>
+          <label>Tipo de registro<select class="input" name="tipoRegistro" data-registration-type required>
+            <option value="">Selecciona una opción</option>
+            <option value="IPN" th:selected="*{tipoRegistro == 'IPN'}">Alumno del IPN · número de boleta</option>
+            <option value="EXTERNO" th:selected="*{tipoRegistro == 'EXTERNO'}">Público en general · CURP</option>
+          </select></label>
+          <div data-identifier="IPN"><label>Número de boleta<input class="input" name="boleta" type="text" inputmode="numeric" pattern="[0-9]{10}" minlength="10" maxlength="10" th:value="*{boleta}" autocomplete="off" aria-describedby="boletaHelp"></label><small id="boletaHelp" class="muted">Ingresa los 10 dígitos de tu boleta.</small></div>
+          <div data-identifier="EXTERNO"><label>CURP<input class="input" name="curp" minlength="18" maxlength="18" th:value="*{curp}" autocomplete="off" aria-describedby="curpHelp"></label><small id="curpHelp" class="muted">Ingresa los 18 caracteres de tu CURP en mayúsculas.</small></div>
+          <label>Teléfono<input class="input" name="telefono" type="tel" required maxlength="15" th:value="*{telefono}" autocomplete="tel"></label>
+          <div class="notice ok"><b>Prioridad y Clasificación</b><p>En caso de ser alumno del IPN, usa tu correo institucional <b>@alumno.ipn.mx</b>.</p><p>De lo contrario, usa tu correo personal para público en general.</p></div>
+          <small class="notice error" th:if="${#fields.hasErrors('telefono')}" th:errors="*{telefono}"></small><label>Correo electrónico<input class="input" name="correo" type="email" required maxlength="100" th:value="*{correo}" autocomplete="email"></label>
+          <small class="notice error" th:if="${#fields.hasErrors('correo')}" th:errors="*{correo}"></small><small class="muted">El correo y tu identificador deben ser únicos.</small>
+          <div class="row"><div class="field"><label>Contraseña<input class="input" name="password" type="password" minlength="8" maxlength="64" data-password-policy autocomplete="new-password" required></label><small class="muted">Mínimo 8 caracteres, una mayúscula y un número.</small></div>
+            <div class="field"><label>Confirmar contraseña<input class="input" name="confirm" type="password" minlength="8" maxlength="64" autocomplete="new-password" required></label></div></div>
+          <button class="btn primary" type="submit">Registrarme</button><p class="muted">Después del registro podrás ingresar el código de verificación en esta misma pantalla.</p><p>¿Ya tienes cuenta? <a th:href="@{/login}">Iniciar sesión</a></p><p><a th:href="@{/verificar}">Continuar una verificación pendiente</a></p>
+        </form>
+      </section>
+      <div th:if="${registered}"><section th:replace="~{verificar :: verification}"></section></div>
+
+    </div>
+  </main>
+</div>
+<footer th:replace="~{layout :: footer}"></footer>
+</body>
+</html>

@@ -5,7 +5,7 @@ import getpass, hashlib, json, os, re, subprocess, sys, tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = ('usuarios','roles_permisos','verificaciones_codigo','convocatorias','idiomas','grupos','historial_academico','prioridades_usuario','fila_virtual','solicitudes_inscripcion','documentos_comprobantes','comprobantes_oficiales','bitacora_acciones')
-SCHEMA_HASH = 'ba9995a1c4d38352d611b621d1f7084840d9e8df6941574562acea4bd1535d44'
+SCHEMA_HASH = '5fc2d8b246f5cb1da6c13f79e793863b4f04e3b8e70ef665fd1b125d29e87ff9'
 
 def ask(label, default=''):
     value = input(label + (f' [{default}]' if default else '') + ': ').strip()

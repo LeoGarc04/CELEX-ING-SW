@@ -16,10 +16,105 @@ import org.springframework.test.context.ActiveProfiles;
     matches = "jdbc:mysql://127\\.0\\.0\\.1:[0-9]+/celex_test_[a-z_]+.*")
 class MySqlWorkflowTest extends WorkflowTest {
   @org.junit.jupiter.api.Test
+  void managedWaitingRoom200() throws Exception {
+    int c = call();
+    db.update(
+        "UPDATE convocatorias SET capacidad_n_fila=200,fecha_inicio_fila=? WHERE id_convocatoria=?",
+        java.time.LocalDateTime.now().plusMinutes(5),
+        c);
+    String hash = encoder.encode("ClaveSegura2026");
+    var users = new java.util.ArrayList<Integer>();
+    for (int n = 0; n < 200; n++)
+      users.add(
+          db.id(
+              "INSERT INTO"
+                  + " usuarios(nombre_completo,curp,telefono,correo,password_hash,tipo_usuario,estado_cuenta,intentos_fallidos)"
+                  + " VALUES(?,?,?,?,?,'Público general','Activa',0)",
+              "Sala " + n,
+              String.format("ROOM%014d", n),
+              "5555555555",
+              "sala" + n + "@example.invalid",
+              hash));
+    callOptions.configure(users.get(0), c, java.time.LocalDateTime.now().plusDays(3), 25);
+    var pool = java.util.concurrent.Executors.newFixedThreadPool(200);
+    try {
+      var gate = new java.util.concurrent.CountDownLatch(1);
+      var pending = new java.util.ArrayList<java.util.concurrent.Future<Long>>();
+      for (int id : users)
+        pending.add(
+            pool.submit(
+                () -> {
+                  gate.await();
+                  long began = System.nanoTime();
+                  queue.join(id, c);
+                  return (System.nanoTime() - began) / 1000000;
+                }));
+      gate.countDown();
+      var values = new java.util.ArrayList<Long>();
+      for (var future : pending) values.add(future.get(90, java.util.concurrent.TimeUnit.SECONDS));
+      java.util.Collections.sort(values);
+      long joinP95 = values.get(189);
+      org.junit.jupiter.api.Assertions.assertEquals(
+          0,
+          db.rows(
+                  "SELECT id_turno FROM fila_virtual WHERE id_convocatoria=? AND"
+                      + " estado_turno='Atendiendo'",
+                  c)
+              .size());
+      var opening = java.time.LocalDateTime.now().minusSeconds(20);
+      db.update("UPDATE convocatorias SET fecha_inicio_fila=? WHERE id_convocatoria=?", opening, c);
+      db.update(
+          "UPDATE fila_virtual SET fecha_ingreso=? WHERE id_convocatoria=?",
+          opening.plusSeconds(1),
+          c);
+      pending.clear();
+      var release = new java.util.concurrent.CountDownLatch(1);
+      for (int id : users) {
+        String folio =
+            (String) db.one("SELECT folio FROM fila_virtual WHERE id_usuario=?", id).get("folio");
+        pending.add(
+            pool.submit(
+                () -> {
+                  release.await();
+                  long began = System.nanoTime();
+                  queue.heartbeat(id, folio);
+                  return (System.nanoTime() - began) / 1000000;
+                }));
+      }
+      release.countDown();
+      values.clear();
+      for (var future : pending) values.add(future.get(90, java.util.concurrent.TimeUnit.SECONDS));
+      java.util.Collections.sort(values);
+      long releaseP95 = values.get(189);
+      java.nio.file.Files.writeString(
+          java.nio.file.Path.of("target/mysql-waiting-room-load.json"),
+          "{\"users\":200,\"join_p95_ms\":" + joinP95 + ",\"release_p95_ms\":" + releaseP95 + "}");
+      org.junit.jupiter.api.Assertions.assertTrue(joinP95 < 3000, "P95 sala: " + joinP95);
+      org.junit.jupiter.api.Assertions.assertTrue(
+          releaseP95 < 3000, "P95 liberación: " + releaseP95);
+      org.junit.jupiter.api.Assertions.assertEquals(
+          200,
+          db.rows(
+                  "SELECT id_bitacora FROM bitacora_acciones WHERE accion LIKE ?",
+                  "Número turno · " + c + " · %")
+              .size());
+      org.junit.jupiter.api.Assertions.assertEquals(
+          1,
+          db.rows(
+                  "SELECT id_turno FROM fila_virtual WHERE id_convocatoria=? AND"
+                      + " estado_turno='Atendiendo'",
+                  c)
+              .size());
+    } finally {
+      pool.shutdownNow();
+    }
+  }
+
+  @org.junit.jupiter.api.Test
   void load200() throws Exception {
     int c = call();
     db.update("UPDATE convocatorias SET capacidad_n_fila=200 WHERE id_convocatoria=?", c);
-    String hash = encoder.encode("una-contraseña-segura");
+    String hash = encoder.encode("ClaveSegura2026");
     var users = new java.util.ArrayList<Integer>();
     for (int i = 0; i < 200; i++)
       users.add(
@@ -61,6 +156,51 @@ class MySqlWorkflowTest extends WorkflowTest {
               + "}");
       org.junit.jupiter.api.Assertions.assertTrue(
           p95 < 3000, "P95 de ingreso a fila: " + p95 + " ms");
+      var httpSamples = new java.util.ArrayList<Long>();
+      var webGate = new java.util.concurrent.CountDownLatch(1);
+      var webFutures = new java.util.ArrayList<java.util.concurrent.Future<Long>>();
+      for (int n = 0; n < users.size(); n++) {
+        String email = "carga" + n + "@example.invalid";
+        String folio =
+            (String)
+                db.one("SELECT folio FROM fila_virtual WHERE id_usuario=?", users.get(n))
+                    .get("folio");
+        webFutures.add(
+            pool.submit(
+                () -> {
+                  webGate.await();
+                  long started = System.nanoTime();
+                  mvc.perform(
+                          org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(
+                                  "/fila/" + folio + "/latido")
+                              .with(
+                                  org.springframework.security.test.web.servlet.request
+                                      .SecurityMockMvcRequestPostProcessors.csrf())
+                              .with(
+                                  org.springframework.security.test.web.servlet.request
+                                      .SecurityMockMvcRequestPostProcessors.user(email)))
+                      .andExpect(
+                          org.springframework.test.web.servlet.result.MockMvcResultMatchers.status()
+                              .isOk());
+                  return (System.nanoTime() - started) / 1000000;
+                }));
+      }
+      webGate.countDown();
+      for (var future : webFutures)
+        httpSamples.add(future.get(90, java.util.concurrent.TimeUnit.SECONDS));
+      java.util.Collections.sort(httpSamples);
+      long webP95 = httpSamples.get(189);
+      java.nio.file.Files.writeString(
+          java.nio.file.Path.of("target/mysql-http-load.json"),
+          "{\"users\":200,\"concurrent_workers\":200,\"heartbeat_p95_ms\":"
+              + webP95
+              + ",\"max_ms\":"
+              + httpSamples.get(199)
+              + ",\"environment\":\"MockMvc with security and local MySQL; excludes internet"
+              + " transport\"}");
+      org.junit.jupiter.api.Assertions.assertTrue(
+          webP95 < 3000, "P95 web local de fila: " + webP95 + " ms");
+
     } finally {
       pool.shutdownNow();
     }
@@ -146,6 +286,56 @@ class MySqlWorkflowTest extends WorkflowTest {
     }
     try (var files = java.nio.file.Files.list(temp.resolve("backups"))) {
       org.junit.jupiter.api.Assertions.assertEquals(1, files.count());
+    }
+  }
+
+  @org.junit.jupiter.api.Test
+  void boletaMigrationPreservesLegacyAccount() throws Exception {
+    var ds = context.getBean(javax.sql.DataSource.class);
+    var migration =
+        new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
+            new org.springframework.core.io.FileSystemResource(
+                "database/migrations/20261117_boleta.sql"));
+    db.update("ALTER TABLE usuarios DROP COLUMN boleta");
+    db.update("ALTER TABLE usuarios MODIFY COLUMN curp VARCHAR(18) NOT NULL");
+    try {
+      String hash = encoder.encode("claveantigua");
+      int id =
+          db.id(
+              "INSERT INTO"
+                  + " usuarios(nombre_completo,curp,telefono,correo,password_hash,tipo_usuario,estado_cuenta,intentos_fallidos)"
+                  + " VALUES('Cuenta"
+                  + " existente','GAML000101HDFRNS09','5555555555','anterior@example.invalid',?,'Público"
+                  + " general','Activa',0)",
+              hash);
+      migration.execute(ds);
+      var account = db.one("SELECT * FROM usuarios WHERE id_usuario=?", id);
+      org.junit.jupiter.api.Assertions.assertEquals(hash, account.get("password_hash"));
+      org.junit.jupiter.api.Assertions.assertEquals("GAML000101HDFRNS09", account.get("curp"));
+      org.junit.jupiter.api.Assertions.assertNull(account.get("boleta"));
+      org.junit.jupiter.api.Assertions.assertTrue(
+          authentication
+              .authenticate(
+                  org.springframework.security.authentication.UsernamePasswordAuthenticationToken
+                      .unauthenticated("anterior@example.invalid", "claveantigua"))
+              .isAuthenticated());
+      accounts.register(
+          new mx.ipn.esime.celex.web.Registration(
+              "López Pérez Ana",
+              "",
+              "5555555555",
+              "nueva@alumno.ipn.mx",
+              "Clave123",
+              "IPN",
+              "2026123456"));
+      org.junit.jupiter.api.Assertions.assertEquals(2, db.rows("SELECT * FROM usuarios").size());
+    } finally {
+      var column =
+          db.rows(
+              "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE"
+                  + " TABLE_SCHEMA='celex_test_suite' AND TABLE_NAME='usuarios' AND"
+                  + " COLUMN_NAME='boleta'");
+      if (column.isEmpty()) migration.execute(ds);
     }
   }
 }

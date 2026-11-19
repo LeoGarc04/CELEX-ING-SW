@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class TeacherService {
   private final Db db;
   private final Clock clock;
+  @org.springframework.beans.factory.annotation.Autowired private CallSettings settings;
 
   public TeacherService(Db db, Clock clock) {
     this.db = db;
@@ -39,29 +40,58 @@ public class TeacherService {
   }
 
   public List<Map<String, Object>> groups(int teacher) {
-    return db.rows(
-        "SELECT g.*,i.nombre AS idioma,c.nombre AS convocatoria FROM grupos g JOIN idiomas i ON"
-            + " i.id_idioma=g.id_idioma JOIN convocatorias c ON c.id_convocatoria=g.id_convocatoria"
-            + " WHERE EXISTS(SELECT 1 FROM roles_permisos r WHERE r.id_usuario=? AND"
-            + " r.tipo_permiso=CONCAT('DOCENTE_GRUPO_',g.id_grupo)) ORDER BY g.id_grupo DESC",
-        teacher);
+    return db
+        .rows(
+            "SELECT g.*,i.nombre AS idioma,c.nombre AS convocatoria FROM grupos g JOIN idiomas i ON"
+                + " i.id_idioma=g.id_idioma JOIN convocatorias c ON"
+                + " c.id_convocatoria=g.id_convocatoria WHERE EXISTS(SELECT 1 FROM roles_permisos r"
+                + " WHERE r.id_usuario=? AND r.tipo_permiso=CONCAT('DOCENTE_GRUPO_',g.id_grupo))"
+                + " ORDER BY g.id_grupo DESC",
+            teacher)
+        .stream()
+        .filter(g -> visible(Db.number(g, "id_convocatoria")))
+        .peek(g -> g.put("listaDisponible", rosterAvailable(Db.number(g, "id_convocatoria"))))
+        .toList();
   }
 
   public Map<String, Object> group(int teacher, int group) {
     requireTeacher(teacher, group);
-    return db.one(
-        "SELECT g.*,i.nombre AS idioma FROM grupos g JOIN idiomas i ON i.id_idioma=g.id_idioma"
-            + " WHERE g.id_grupo=?",
-        group);
+    var found =
+        db.one(
+            "SELECT g.*,i.nombre AS idioma FROM grupos g JOIN idiomas i ON i.id_idioma=g.id_idioma"
+                + " WHERE g.id_grupo=?",
+            group);
+    if (!visible(Db.number(found, "id_convocatoria")))
+      throw new AccessDeniedException(
+          "Los grupos se habilitan 48 horas antes del inicio de clases.");
+    found.put("listaDisponible", rosterAvailable(Db.number(found, "id_convocatoria")));
+    return found;
+  }
+
+  private boolean visible(int call) {
+    if (!settings.managed(call)) return true;
+    var date = settings.classes(call);
+    var c = db.one("SELECT estado FROM convocatorias WHERE id_convocatoria=?", call);
+    return date != null
+        && !"Borrador".equals(c.get("estado"))
+        && !LocalDateTime.now(clock).isBefore(date.minusHours(48));
+  }
+
+  private boolean rosterAvailable(int call) {
+    if (!settings.managed(call)) return true;
+    var c = db.one("SELECT estado,fecha_fin_fila FROM convocatorias WHERE id_convocatoria=?", call);
+    return "Cerrada".equals(c.get("estado"))
+        || !LocalDateTime.now(clock).isBefore(QueueService.time(c.get("fecha_fin_fila")));
   }
 
   public List<Map<String, Object>> students(int teacher, int group) {
-    requireTeacher(teacher, group);
+    var current = group(teacher, group);
+    if (!rosterAvailable(Db.number(current, "id_convocatoria"))) return List.of();
     return db
         .rows(
             "SELECT DISTINCT u.id_usuario,u.nombre_completo FROM solicitudes_inscripcion s JOIN"
                 + " usuarios u ON u.id_usuario=s.id_usuario WHERE s.id_grupo=? AND"
-                + " s.estado_inscripcion='Confirmada' ORDER BY u.nombre_completo",
+                + " s.estado_inscripcion='Confirmada' ORDER BY u.nombre_completo,u.id_usuario",
             group)
         .stream()
         .map(
@@ -138,6 +168,11 @@ public class TeacherService {
     var g = db.one("SELECT * FROM grupos WHERE id_grupo=? FOR UPDATE", group);
     db.one("SELECT id_usuario FROM usuarios WHERE id_usuario=? FOR UPDATE", teacher);
     requireTeacher(teacher, group);
+    if (!visible(Db.number(g, "id_convocatoria"))
+        || !rosterAvailable(Db.number(g, "id_convocatoria")))
+      throw new AccessDeniedException(
+          "La lista y las calificaciones se habilitan después del cierre de convocatoria y 48 horas"
+              + " antes de clases.");
     if (grade < 0 || grade > 100)
       throw new IllegalArgumentException("La calificación debe estar entre 0 y 100");
     if (db.rows(

@@ -18,6 +18,7 @@ public class PaymentService {
   private final BusinessCalendar calendar;
   private final Clock clock;
   private final ScholarshipService scholarships;
+  @org.springframework.beans.factory.annotation.Autowired private CallSettings settings;
 
   public PaymentService(
       Db db,
@@ -65,9 +66,12 @@ public class PaymentService {
         || amount.compareTo((BigDecimal) s.get("monto_calculado")) != 0)
       throw new IllegalArgumentException(
           "Revisa la referencia, fecha y el importe exacto de la cuota.");
+    boolean paymentOnly = !settings.preference(id).isEmpty();
+    if (!paymentOnly && (identity == null || identity.isEmpty()))
+      throw new IllegalArgumentException("Adjunta identificación.");
     String p = storage.save(payment), i = null;
     try {
-      i = storage.save(identity);
+      i = paymentOnly ? "" : storage.save(identity);
       db.update(
           "INSERT INTO"
               + " documentos_comprobantes(id_solicitud,numero_referencia,fecha_pago,importe,url_comprobante_pago,url_identificacion,estatus_pago,observaciones_dictamen)"
@@ -78,7 +82,11 @@ public class PaymentService {
           amount,
           p,
           i,
-          DocumentAssessment.pending().encode());
+          (paymentOnly
+                  ? new DocumentAssessment(
+                      "Pendiente de revisión", "", "Aprobado", "No requerido en este flujo")
+                  : DocumentAssessment.pending())
+              .encode());
       db.update(
           "UPDATE solicitudes_inscripcion SET estado_inscripcion='Pendiente de"
               + " revisión',fecha_envio=?,prorroga_expira_en=NULL WHERE id_solicitud=?",
@@ -87,7 +95,7 @@ public class PaymentService {
       db.audit(user, "Envío a revisión", "Solicitud " + id);
     } catch (Exception e) {
       storage.remove(p);
-      if (i != null) storage.remove(i);
+      if (i != null && !i.isBlank()) storage.remove(i);
       throw e;
     }
   }
@@ -123,6 +131,9 @@ public class PaymentService {
     var now = LocalDateTime.now(clock);
     String result;
     if (assessment.approved()) {
+      if (!settings.preference(id).isEmpty() && !settings.assigned(id))
+        throw new IllegalArgumentException(
+            "Asigna el grupo, horario y profesor antes de aprobar la inscripción.");
       result = "Confirmada";
       db.update(
           "UPDATE solicitudes_inscripcion SET"

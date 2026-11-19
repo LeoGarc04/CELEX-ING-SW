@@ -43,6 +43,11 @@ public class SecurityConfig {
                         "/validar/**",
                         "/error")
                     .permitAll()
+                    .requestMatchers(
+                        org.springframework.http.HttpMethod.POST,
+                        "/admin/convocatorias",
+                        "/admin/convocatorias/**")
+                    .hasAuthority("CONFIGURACION")
                     .requestMatchers("/admin/**")
                     .hasAuthority("ADMIN")
                     .requestMatchers("/profesor/**", "/profesor")
@@ -54,7 +59,15 @@ public class SecurityConfig {
         .formLogin(
             f ->
                 f.loginPage("/login")
-                    .defaultSuccessUrl("/panel", true)
+                    .successHandler(
+                        (request, response, authentication) -> {
+                          boolean administrator =
+                              authentication.getAuthorities().stream()
+                                  .anyMatch(authority -> "ADMIN".equals(authority.getAuthority()));
+                          request.getSession().removeAttribute("SPRING_SECURITY_SAVED_REQUEST");
+                          response.sendRedirect(
+                              request.getContextPath() + (administrator ? "/admin" : "/panel"));
+                        })
                     .failureUrl("/login?error")
                     .permitAll())
         .logout(l -> l.logoutSuccessUrl("/login?logout"))

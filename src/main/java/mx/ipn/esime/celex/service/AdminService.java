@@ -45,7 +45,9 @@ public class AdminService {
         "UPDATE convocatorias SET capacidad_n_fila=?,estado=?,fecha_inicio_fila=?,fecha_fin_fila=?"
             + " WHERE id_convocatoria=?",
         capacity,
-        closed ? "Cerrada" : "Programada",
+        closed
+            ? "Cerrada"
+            : ("Borrador".equals(original.get("estado")) ? "Borrador" : "Programada"),
         start,
         end,
         id);
@@ -84,9 +86,9 @@ public class AdminService {
     text(room, 50);
     text(days, 50);
     Rules.interval(time);
-    if (!days.matches("[1-7](,[1-7])*"))
+    if (!days.matches("[1-6](,[1-6])*"))
       throw new IllegalArgumentException(
-          "Días: usa números ISO 1=lunes a 7=domingo, separados por coma");
+          "Días: usa números ISO 1=lunes a 6=sábado, separados por coma");
     if (capacity < 1 || capacity > 10000) throw new IllegalArgumentException("Cupo inválido");
     for (var g :
         db.rows("SELECT * FROM grupos WHERE id_convocatoria=? AND estado='Activo'", call)) {
@@ -131,8 +133,8 @@ public class AdminService {
     text(room, 50);
     text(days, 50);
     Rules.interval(time);
-    if (!days.matches("[1-7](,[1-7])*"))
-      throw new IllegalArgumentException("Usa días ISO separados por coma");
+    if (!days.matches("[1-6](,[1-6])*"))
+      throw new IllegalArgumentException("Selecciona días de lunes a sábado");
     int occupied = Db.number(current, "cupo_total") - Db.number(current, "cupo_disponible");
     if (capacity < occupied || capacity < 1 || capacity > 10000)
       throw new IllegalArgumentException("El cupo total no puede ser menor a los lugares ocupados");
@@ -166,6 +168,26 @@ public class AdminService {
           "Grupo " + id + " · cambio de profesor registrado");
     }
     db.audit(actor, "Cambio de grupo", "Grupo " + id + " · " + time + " · cupo " + capacity);
+  }
+
+  @Transactional
+  public void deleteGroup(int actor, int id) {
+    var original = db.one("SELECT * FROM grupos WHERE id_grupo=?", id);
+    db.one(
+        "SELECT * FROM convocatorias WHERE id_convocatoria=? FOR UPDATE",
+        Db.number(original, "id_convocatoria"));
+    var group = db.one("SELECT * FROM grupos WHERE id_grupo=? FOR UPDATE", id);
+    if (!db.rows("SELECT id_solicitud FROM solicitudes_inscripcion WHERE id_grupo=?", id).isEmpty()
+        || Db.number(group, "cupo_total") != Db.number(group, "cupo_disponible"))
+      throw new IllegalArgumentException(
+          "Este grupo tiene solicitudes o lugares ocupados. Desactívalo para conservar el"
+              + " historial.");
+    db.update("DELETE FROM roles_permisos WHERE tipo_permiso=?", "DOCENTE_GRUPO_" + id);
+    db.update("DELETE FROM grupos WHERE id_grupo=?", id);
+    db.audit(
+        actor,
+        "Eliminación de grupo",
+        "Grupo " + id + " · " + group.get("nivel") + " · " + group.get("horario"));
   }
 
   @Transactional
@@ -269,6 +291,40 @@ public class AdminService {
     if (!profile.equals("USUARIO"))
       db.update("INSERT INTO roles_permisos(id_usuario,tipo_permiso) VALUES(?,?)", user, profile);
     db.audit(actor, "Cambio de perfil", "Usuario " + user + " · " + profile);
+  }
+
+  @Transactional
+  public void permissions(int actor, int user, Set<String> permissions) {
+    db.rows(
+        "SELECT id_usuario FROM usuarios WHERE id_usuario IN (?,?) ORDER BY id_usuario FOR UPDATE",
+        actor,
+        user);
+    if (Profiles.authorities(db, actor).stream()
+        .noneMatch(a -> a.getAuthority().equals("GESTION_PERMISOS")))
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Sin permiso para gestionar permisos");
+    if (actor == user)
+      throw new IllegalArgumentException("No puedes limitar tus propios permisos administrativos.");
+    if (!Profiles.ADMIN_PERMISSIONS.containsAll(permissions))
+      throw new IllegalArgumentException("Permiso inválido");
+    if (db.rows(
+            "SELECT id_usuario FROM roles_permisos WHERE id_usuario=? AND tipo_permiso='ADMIN'",
+            user)
+        .isEmpty())
+      throw new IllegalArgumentException("La cuenta debe tener perfil Administrador.");
+    db.update(
+        "DELETE FROM roles_permisos WHERE id_usuario=? AND tipo_permiso IN"
+            + " ('CONFIGURACION','ACADEMICO','FINANCIERO','AUDITORIA','PERMISOS_LIMITADOS')",
+        user);
+    db.update(
+        "INSERT INTO roles_permisos(id_usuario,tipo_permiso) VALUES(?,'PERMISOS_LIMITADOS')", user);
+    for (String permission : permissions)
+      db.update(
+          "INSERT INTO roles_permisos(id_usuario,tipo_permiso) VALUES(?,?)", user, permission);
+    db.audit(
+        actor,
+        "Cambio de permisos administrativos",
+        "Usuario " + user + " · " + new TreeSet<>(permissions));
   }
 
   private static void text(String value, int max) {

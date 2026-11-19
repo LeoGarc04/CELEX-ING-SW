@@ -15,8 +15,11 @@ public class usuario {
   @Column(name = "nombre_completo", nullable = false, length = 150)
   private String nombreCompleto;
 
-  @Column(name = "curp", nullable = false, unique = true, length = 18)
+  @Column(name = "curp", unique = true, length = 18)
   private String curp;
+
+  @Column(name = "boleta", unique = true, length = 10)
+  private String boleta;
 
   @Column(name = "telefono", nullable = false, length = 15)
   private String telefono;
@@ -64,6 +67,14 @@ public class usuario {
 
   public void setCurp(String curp) {
     this.curp = curp;
+  }
+
+  public String getBoleta() {
+    return boleta;
+  }
+
+  public void setBoleta(String boleta) {
+    this.boleta = boleta;
   }
 
   public String getTelefono() {

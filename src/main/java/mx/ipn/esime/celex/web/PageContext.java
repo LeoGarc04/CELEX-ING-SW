@@ -10,6 +10,11 @@ public class PageContext {
   private final mx.ipn.esime.celex.repository.Db db;
   private final String ipnFee, publicFee;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private mx.ipn.esime.celex.service.CallSettings settings;
+
+  @org.springframework.beans.factory.annotation.Autowired private java.time.Clock portalClock;
+
   @org.springframework.beans.factory.annotation.Value("${celex.public-testing:false}")
   private boolean publicTesting;
 
@@ -31,6 +36,14 @@ public class PageContext {
     m.addAttribute(
         "focusedQueueLink", Objects.toString(request.getAttribute("queue.path"), "/panel"));
     m.addAttribute("publicTesting", publicTesting);
+    var contact = new java.util.HashMap<String, Object>(settings.read("Contacto CELEX"));
+    contact.putIfAbsent("telefono", "");
+    contact.putIfAbsent("correo", "");
+    m.addAttribute(
+        "contactConfigured",
+        !contact.get("telefono").toString().isBlank()
+            || !contact.get("correo").toString().isBlank());
+    m.addAttribute("contact", contact);
     m.addAttribute(
         "teacher",
         a != null
@@ -38,27 +51,46 @@ public class PageContext {
     for (var entry :
         java.util.Map.of(
                 "manager",
-                "ADMIN",
+                "GESTION_PERMISOS",
                 "config",
-                "ADMIN",
+                "CONFIGURACION",
                 "academic",
-                "ADMIN",
+                "ACADEMICO",
                 "financial",
-                "ADMIN",
+                "FINANCIERO",
                 "auditor",
-                "ADMIN")
+                "AUDITORIA")
             .entrySet())
       m.addAttribute(
           entry.getKey(),
           a != null
               && a.getAuthorities().stream()
-                  .anyMatch(
-                      permission ->
-                          permission.getAuthority().equals("ADMIN")
-                              || permission.getAuthority().equals(entry.getValue())));
+                  .anyMatch(permission -> permission.getAuthority().equals(entry.getValue())));
     m.addAttribute("englishLevels", mx.ipn.esime.celex.service.EnglishLevels.ALL);
     m.addAttribute("ipnFee", ipnFee);
     m.addAttribute("publicFee", publicFee);
+    String path = request.getRequestURI();
+    String section =
+        path.startsWith("/tramites")
+            ? "tramites"
+            : path.startsWith("/perfil")
+                ? "perfil"
+                : path.equals("/calendario")
+                    ? "calendario"
+                    : path.equals("/mapa-curricular")
+                        ? "mapa"
+                        : path.equals("/pagos")
+                            ? "pagos"
+                            : path.startsWith("/profesor")
+                                ? "profesor"
+                                : path.startsWith("/fila/") && path.endsWith("/grupos")
+                                    ? "oferta"
+                                    : path.startsWith("/fila/")
+                                        ? "fila"
+                                        : path.startsWith("/solicitud/")
+                                            ? "documentos"
+                                            : path.equals("/panel") ? "inicio" : "";
+    m.addAttribute("activeSection", section);
     m.addAttribute("pagePath", request.getRequestURI());
     m.addAttribute("adminArea", request.getRequestURI().startsWith("/admin"));
     m.addAttribute("displayName", "Visitante");
@@ -71,9 +103,12 @@ public class PageContext {
         m.addAttribute("displayName", user.get("nombre_completo"));
         var turns =
             db.rows(
-                "SELECT folio,estado_turno FROM fila_virtual WHERE id_usuario=? ORDER BY id_turno"
-                    + " DESC LIMIT 1",
-                user.get("id_usuario"));
+                "SELECT f.folio,f.estado_turno FROM fila_virtual f JOIN convocatorias c ON"
+                    + " c.id_convocatoria=f.id_convocatoria WHERE f.id_usuario=? AND f.estado_turno"
+                    + " IN ('En espera','Atendiendo') AND c.estado NOT IN ('Cerrada','Borrador')"
+                    + " AND c.fecha_fin_fila>? ORDER BY f.id_turno DESC LIMIT 1",
+                user.get("id_usuario"),
+                java.time.LocalDateTime.now(portalClock));
         if (!turns.isEmpty()) {
           var turn = turns.get(0);
           queue = "/fila/" + turn.get("folio");

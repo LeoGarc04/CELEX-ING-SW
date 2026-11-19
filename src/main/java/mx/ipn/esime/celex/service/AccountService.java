@@ -55,24 +55,40 @@ public class AccountService {
 
   public static void validatePassword(String value) {
     if (value == null
-        || value.length() < 12
+        || value.codePointCount(0, value.length()) < 8
         || value.length() > 64
+        || !value.matches("(?s)(?=.*\\p{Lu})(?=.*\\p{Nd}).*")
         || value.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 72)
       throw new IllegalArgumentException(
-          "Contraseña: usa de 12 a 64 caracteres y un máximo de 72 bytes UTF-8.");
+          "Contraseña: usa de 8 a 64 caracteres, al menos una mayúscula y un número (máximo 72"
+              + " bytes UTF-8).");
   }
 
   @Transactional
   public void register(Registration r) {
     validatePassword(r.password());
+    if (!r.isDocumentoValido())
+      throw new IllegalArgumentException(
+          "Selecciona tu tipo de registro e ingresa una boleta de 10 dígitos para IPN o una CURP"
+              + " válida para público general.");
+    boolean institutional = "Comunidad IPN".equals(classify(r.correo()));
+    if (r.ipn() != institutional)
+      throw new IllegalArgumentException(
+          r.ipn()
+              ? "Los alumnos del IPN deben usar su correo @alumno.ipn.mx."
+              : "Si usas correo institucional, selecciona alumno del IPN e ingresa tu boleta.");
+    String curp = r.ipn() ? null : r.curp(), boleta = r.ipn() ? r.boleta() : null;
     if (!db.rows(
-            "SELECT id_usuario FROM usuarios WHERE correo=? OR curp=?",
+            "SELECT id_usuario FROM usuarios WHERE correo=? OR curp=? OR boleta=?",
             normalize(r.correo()),
-            r.curp())
-        .isEmpty()) throw new IllegalArgumentException("El correo o la CURP ya está registrado.");
+            curp,
+            boleta)
+        .isEmpty())
+      throw new IllegalArgumentException("El correo, la CURP o la boleta ya están registrados.");
     var account = new mx.ipn.esime.celex.entity.usuario();
-    account.setNombreCompleto(r.nombre().trim());
-    account.setCurp(r.curp());
+    account.setNombreCompleto(r.nombre().trim().replaceAll("\\s+", " "));
+    account.setCurp(curp);
+    account.setBoleta(boleta);
     account.setTelefono(r.telefono());
     account.setCorreo(normalize(r.correo()));
     account.setPasswordHash(encoder.encode(r.password()));
@@ -89,9 +105,9 @@ public class AccountService {
         "UPDATE verificaciones_codigo SET usado=TRUE WHERE id_usuario=? AND tipo_codigo=?",
         id,
         type);
-    String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    String alphabet = "0123456789";
     StringBuilder code = new StringBuilder();
-    for (int i = 0; i < 10; i++) code.append(alphabet.charAt(random.nextInt(alphabet.length())));
+    for (int i = 0; i < 6; i++) code.append(alphabet.charAt(random.nextInt(alphabet.length())));
     db.update(
         "INSERT INTO verificaciones_codigo(id_usuario,codigo,tipo_codigo,expira_en,usado)"
             + " VALUES(?,?,?,?,FALSE)",

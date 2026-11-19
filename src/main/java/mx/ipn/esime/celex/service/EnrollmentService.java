@@ -12,6 +12,8 @@ public class EnrollmentService {
   private final QueueService queue;
   private final FeePolicy fees;
   private final ScholarshipService scholarships;
+  @org.springframework.beans.factory.annotation.Autowired private CallSettings settings;
+  @org.springframework.beans.factory.annotation.Autowired private AcademicRoutes routes;
 
   public EnrollmentService(
       Db db, QueueService queue, FeePolicy fees, ScholarshipService scholarships) {
@@ -31,10 +33,17 @@ public class EnrollmentService {
             call)
         .stream()
         .filter(g -> canEnroll(user, g))
+        .map(
+            g -> {
+              var offer = new HashMap<String, Object>(g);
+              offer.put("compatible", true);
+              return (Map<String, Object>) offer;
+            })
         .toList();
   }
 
   public boolean canEnroll(int user, Map<String, Object> group) {
+    if (settings.managed(Db.number(group, "id_convocatoria"))) return routes.eligible(user, group);
     var history =
         db.rows(
             "SELECT * FROM historial_academico WHERE id_usuario=? AND id_idioma=? ORDER BY"
@@ -58,7 +67,8 @@ public class EnrollmentService {
     if (!existing.isEmpty()) return Db.number(existing.get(0), "id_solicitud");
     turn = db.one("SELECT * FROM fila_virtual WHERE folio=? AND id_usuario=?", folio, user);
     if (!List.of("En espera", "Atendiendo").contains(turn.get("estado_turno"))
-        || Db.number(turn, "posicion_actual") != 1)
+        || Db.number(turn, "posicion_actual") != 1
+        || !queue.ready(turn))
       throw new IllegalArgumentException("Todavía no es tu turno o tu reserva caducó.");
     var g =
         db.one(

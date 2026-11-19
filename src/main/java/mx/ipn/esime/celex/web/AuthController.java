@@ -26,59 +26,99 @@ public class AuthController {
   }
 
   @GetMapping("/registro")
-  String register(Model m) {
-    m.addAttribute("registration", new Registration("", "", "", "", ""));
+  String register(Model m, jakarta.servlet.http.HttpSession session) {
+    if (session.getAttribute("verification.email") instanceof String email) {
+      m.addAttribute("correo", email);
+      session.setAttribute("verification.origin", "registro");
+      return verificationView(m, session);
+    }
+    m.addAttribute("registration", new Registration("", "", "", "", "", "", ""));
     return "registro";
   }
 
   @PostMapping("/registro")
   String register(
-      @Valid @ModelAttribute("registration") Registration r, BindingResult errors, Model m) {
+      @Valid @ModelAttribute("registration") Registration r,
+      BindingResult errors,
+      Model m,
+      jakarta.servlet.http.HttpSession session,
+      org.springframework.web.servlet.mvc.support.RedirectAttributes flash) {
     if (errors.hasErrors()) return "registro";
-    accounts.register(r);
-    m.addAttribute("correo", r.correo());
-    m.addAttribute("message", "Enviamos tu código de activación.");
-    return "verificar";
+    try {
+      accounts.register(r);
+    } catch (IllegalArgumentException e) {
+      errors.reject("registro", e.getMessage());
+      return "registro";
+    } catch (org.springframework.dao.DataIntegrityViolationException e) {
+      errors.reject("registro", "El correo, la CURP o la boleta ya están registrados.");
+      return "registro";
+    }
+    String email = AccountService.normalize(r.correo());
+    session.setAttribute("verification.email", email);
+    session.setAttribute("verification.origin", "registro");
+    flash.addFlashAttribute("message", "Enviamos tu código de activación. Ingresa los seis dígitos para activar tu cuenta.");
+    return "redirect:/registro";
   }
 
   @GetMapping("/verificar")
-  String verify() {
-    return "verificar";
+  String verify(Model m, jakarta.servlet.http.HttpSession session) {
+    if (!m.containsAttribute("correo")) {
+      Object email = session.getAttribute("verification.email");
+      if (email instanceof String) m.addAttribute("correo", email);
+    }
+    return verificationView(m, session);
   }
 
   @PostMapping("/verificar")
-  String verify(@RequestParam String correo, @RequestParam String codigo, Model m) {
+  String verify(
+      @RequestParam String correo,
+      @RequestParam String codigo,
+      Model m,
+      jakarta.servlet.http.HttpSession session) {
     m.addAttribute("correo", correo);
+    session.setAttribute("verification.email", AccountService.normalize(correo));
     try {
       accounts.verify(correo, codigo.trim().toUpperCase(java.util.Locale.ROOT), null);
     } catch (IllegalArgumentException e) {
       m.addAttribute(
           "error",
           "El código no es válido o venció. Revisa el correo y el código, o solicita uno nuevo.");
-      return "verificar";
+      return verificationView(m, session);
     }
+    session.removeAttribute("verification.email");
+    session.removeAttribute("verification.origin");
     m.addAttribute("message", "Cuenta activada. Ya puedes iniciar sesión.");
     return "login";
   }
 
   @PostMapping("/reenviar")
-  String resend(@RequestParam String correo, Model m) {
+  String resend(@RequestParam String correo, Model m, jakarta.servlet.http.HttpSession session) {
     m.addAttribute("correo", correo);
+    session.setAttribute("verification.email", AccountService.normalize(correo));
     try {
       accounts.requestActivation(correo);
     } catch (org.springframework.mail.MailException e) {
       m.addAttribute(
           "error",
           "No se pudo enviar el correo. Espera un momento y vuelve a solicitar el código.");
-      return "verificar";
+      return verificationView(m, session);
     } catch (IllegalArgumentException e) {
       m.addAttribute("error", e.getMessage());
-      return "verificar";
+      return verificationView(m, session);
     }
     m.addAttribute(
         "message",
         "Si la cuenta está pendiente y pasó un minuto desde el último envío, recibirás un nuevo"
             + " código.");
+    return verificationView(m, session);
+  }
+
+  private String verificationView(Model m, jakarta.servlet.http.HttpSession session) {
+    if ("registro".equals(session.getAttribute("verification.origin"))) {
+      m.addAttribute("registered", true);
+      m.addAttribute("registration", new Registration("", "", "", "", "", "", ""));
+      return "registro";
+    }
     return "verificar";
   }
 

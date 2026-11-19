@@ -102,7 +102,8 @@ public class LivePermissionsFilter extends OncePerRequestFilter {
                   || (ready
                       && ((read && path.equals(queuePath + "/grupos"))
                           || (req.getMethod().equals("POST")
-                              && path.equals(queuePath + "/grupo"))));
+                              && (path.equals(queuePath + "/grupo")
+                                  || path.equals(queuePath + "/preferencia")))));
           if (!allowed) {
             res.setStatus(303);
             res.setHeader("Location", req.getContextPath() + queuePath);
