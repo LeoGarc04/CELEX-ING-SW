@@ -32,7 +32,7 @@ Las cuentas nuevas son Usuario. El primer administrador se designa mediante `scr
 
 ## Registro y perfil
 
-IPN utiliza boleta de diez dígitos y correo `@alumno.ipn.mx`; el público general utiliza CURP y correo personal. La contraseña requiere al menos ocho caracteres, una mayúscula y un número. El nombre comienza por apellidos; las listas se ordenan alfabéticamente.
+Los cursos admiten personas de 15 años en adelante. IPN utiliza boleta de diez dígitos y correo `@alumno.ipn.mx`; el público general utiliza CURP y correo personal. La contraseña requiere al menos ocho caracteres, una mayúscula y un número. El nombre comienza por apellidos; las listas se ordenan alfabéticamente.
 
 La verificación usa código de seis dígitos, caducidad y reenvío para registros interrumpidos. La sección de verificación se encuentra dentro del registro. Mi perfil permite editar nombre, teléfono y contraseña; correo e identificador se conservan. Las contraseñas se guardan con hash BCrypt.
 
@@ -42,7 +42,7 @@ Las convocatorias nuevas incluyen grupos, apertura, cierre, capacidad, inicio de
 
 La sala de espera admite entradas antes de la apertura. La fila ordena ventanas de cinco segundos aplicando las prioridades: becarios por puntaje descendente, externos con promedio anterior mayor a nueve, nuevos y resto. Los empates respetan la llegada; las ventanas posteriores no desplazan a las anteriores ni a una atención iniciada. La clasificación IPN determina cuotas y no agrega una prioridad distinta a este orden.
 
-La prioridad se muestra a quienes tienen categoría preferente. Los folios nuevos tienen ocho caracteres. El turno se asigna después de ordenar la ventana y permanece estable; la posición actual cambia al avanzar. La reserva se conserva tres minutos sin conexión. El latido es cada segundo en convocatorias nuevas y cada veinte segundos en las anteriores.
+La prioridad se muestra a quienes tienen categoría preferente. Los folios nuevos tienen ocho caracteres. La interfaz muestra únicamente la posición actual, que cambia al avanzar. Hasta diez usuarios pueden completar su solicitud simultáneamente, sin exceder el cupo de los grupos. La reserva se conserva tres minutos sin conexión. El latido es cada segundo en convocatorias nuevas y cada veinte segundos en las anteriores.
 
 Si el folio ya tiene solicitud, regresar a la fila lleva a esa solicitud, incluso tras el cierre. No genera una segunda inscripción ni consume otro cupo.
 
@@ -52,9 +52,19 @@ Sin historial del idioma se ofrece Introductorio en inglés, Básico 1 en otros 
 
 El alumno elige idioma, vía de ingreso, modalidad y horario preferido. La selección reserva un lugar provisional. Después adjunta su comprobante de pago y termina la captura. El estado puede consultarse siempre.
 
-Administración revisa en un plazo de 48 horas y asigna grupo, horario y profesor antes de aprobar. En intensivo puede definir el horario final. No hay aprobación automática por vencimiento del plazo. Tras rechazo, la corrección dispone de dos días hábiles; al vencer se cancela y libera el cupo según las reglas del proceso. Los festivos se configuran en `CELEX_HOLIDAYS`.
+Administración revisa en un plazo de 48 horas y asigna grupo, horario y profesor antes de aprobar. En intensivo puede definir el horario final. No hay aprobación automática por vencimiento del plazo. Tras rechazo, la corrección dispone de 48 horas exactas desde el dictamen, incluidos fines de semana y festivos. La página y el correo muestran la fecha límite; al vencer se cancela y libera el cupo según las reglas del proceso.
 
-Las nuevas solicitudes piden solo comprobante de pago, en PDF/JPG/PNG hasta 2 MB. Los expedientes anteriores conservan el flujo de grupo directo y sus dos documentos de pago e identificación. Las reservas y reasignaciones controlan cupos mediante transacciones; los grupos validan traslapes de profesor y aula.
+Las nuevas solicitudes piden solo comprobante de pago, sin capturar manualmente una referencia, en PDF/JPG/PNG hasta 2 MB. Los expedientes anteriores conservan el flujo de grupo directo y sus dos documentos de pago e identificación. Las reservas y reasignaciones controlan cupos mediante transacciones; los grupos validan traslapes de profesor y aula.
+
+La revisión administrativa separa solicitudes Pendientes, Aprobadas y Rechazadas, con contadores. Una corrección enviada vuelve a Pendientes. Las canceladas se conservan en Rechazadas con su estado original.
+
+### Examen de colocación
+
+El alumno selecciona una sola vez el nivel al que desea aplicar el examen, hasta Avanzado 1 incluido. Tras revisar el pago del examen, administración confirma la cita; su comprobante incluye ese nivel solicitado, profesor, aula, día, horario y QR.
+
+Después del examen, administración publica el resultado y el nivel asignado, también hasta Avanzado 1. El alumno recibe el aviso y puede descargar su resultado. Para continuar al curso debe haber un grupo activo con cupo de ese idioma y nivel en la misma convocatoria; elige modalidad y horario entre las opciones publicadas. Si no hay grupo, el resultado se conserva y se explica que debe esperar su publicación antes de pagar.
+
+La solicitud y el pago del curso son independientes del examen. Administración asigna el grupo definitivo y aprueba el pago del curso; el comprobante final incluye grupo, nivel, modalidad, profesor, aula, días, horario, inicio de clases y QR. Los correos presentan datos, observaciones y enlaces en secciones separadas. El dictamen de aprobación enlaza al comprobante; su descarga exige iniciar sesión con la cuenta titular.
 
 ## Cuotas y trámites
 
@@ -93,7 +103,7 @@ Git excluye `application-local.properties`, `.env`, documentos, respaldos, logs,
 ./mvnw test
 ```
 
-Las pruebas generales usan H2 y correo simulado. La revisión del 19 de noviembre pasó 62 pruebas generales y tres regresiones específicas en MySQL, además del recorrido móvil de reingreso y lista docente. La actualización anterior pasó 58 pruebas MySQL completas. Algunos casos se comparten entre ambas suites; no son escenarios independientes.
+Las pruebas generales usan H2 y correo simulado. La actualización del 20 de noviembre incluye regresiones de colocación, pagos separados, descarga del comprobante final, correos, atención simultánea y clasificación de solicitudes. Los recorridos en navegador comprueban también la vista móvil y las tres secciones de revisión. Las pruebas MySQL se ejecutan por separado; no se presentan como ejecutadas al correr únicamente la suite general.
 
 Para MySQL usa exclusivamente una base desechable `celex_test_suite` en 127.0.0.1 y configura `CELEX_TEST_MYSQL_URL`, `CELEX_TEST_MYSQL_USER` y `CELEX_TEST_MYSQL_PASSWORD`:
 

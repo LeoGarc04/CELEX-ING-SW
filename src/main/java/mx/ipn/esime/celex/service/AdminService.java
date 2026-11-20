@@ -79,7 +79,8 @@ public class AdminService {
     db.one("SELECT * FROM convocatorias WHERE id_convocatoria=? FOR UPDATE", call);
     var selectedLanguage =
         db.one("SELECT * FROM idiomas WHERE id_idioma=? AND activo=TRUE", language);
-    EnglishLevels.requireValid((String) selectedLanguage.get("nombre"), level);
+    if (!("Colocación".equals(level) && "Examen de colocación".equals(modality)))
+      EnglishLevels.requireValid((String) selectedLanguage.get("nombre"), level);
     text(level, 20);
     text(modality, 30);
     text(teacher, 150);

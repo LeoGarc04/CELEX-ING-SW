@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class EnrollmentService {
+  @org.springframework.beans.factory.annotation.Autowired private AgePolicy ages;
   private final Db db;
   private final QueueService queue;
   private final FeePolicy fees;
@@ -43,16 +44,7 @@ public class EnrollmentService {
   }
 
   public boolean canEnroll(int user, Map<String, Object> group) {
-    if (settings.managed(Db.number(group, "id_convocatoria"))) return routes.eligible(user, group);
-    var history =
-        db.rows(
-            "SELECT * FROM historial_academico WHERE id_usuario=? AND id_idioma=? ORDER BY"
-                + " fecha_registro DESC,id_historial DESC",
-            user,
-            group.get("id_idioma"));
-    return !history.isEmpty()
-        && Rules.eligible(history.get(0))
-        && Objects.equals(history.get(0).get("nivel_actual"), group.get("nivel"));
+    return routes.eligible(user, group);
   }
 
   @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
@@ -65,9 +57,10 @@ public class EnrollmentService {
     queue.order(call);
     var existing = db.rows("SELECT id_solicitud FROM solicitudes_inscripcion WHERE folio=?", folio);
     if (!existing.isEmpty()) return Db.number(existing.get(0), "id_solicitud");
+    ages.require(user);
     turn = db.one("SELECT * FROM fila_virtual WHERE folio=? AND id_usuario=?", folio, user);
     if (!List.of("En espera", "Atendiendo").contains(turn.get("estado_turno"))
-        || Db.number(turn, "posicion_actual") != 1
+        || (Db.number(turn, "posicion_actual") < 1 || Db.number(turn, "posicion_actual") > QueueService.ACTIVE_SLOTS)
         || !queue.ready(turn))
       throw new IllegalArgumentException("Todavía no es tu turno o tu reserva caducó.");
     var g =

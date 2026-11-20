@@ -35,6 +35,14 @@ public class AcademicRoutes {
     return new ArrayList<>(values);
   }
 
+  public List<String> examLevels(int language) {
+    return levels(language).stream()
+        .filter(level -> level.equals("Introductorio")
+            || (stage(level, List.of("Básico", "Intermedio", "Avanzado")) < 2)
+            || level.equals("Avanzado 1"))
+        .toList();
+  }
+
   private static int stage(String value, List<String> stages) {
     for (int i = 0; i < stages.size(); i++) if (value.startsWith(stages.get(i))) return i;
     return 3;

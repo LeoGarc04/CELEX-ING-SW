@@ -34,6 +34,7 @@ class WorkflowTest {
   @Autowired mx.ipn.esime.celex.service.InitialAdminService initialAdmins;
   @Autowired Db db;
   @Autowired AccountService accounts;
+  @Autowired AgePolicy ages;
   @Autowired QueueService queue;
   @Autowired EnrollmentService enrollments;
   @Autowired PaymentService payments;
@@ -70,7 +71,7 @@ class WorkflowTest {
   }
 
   private int student(int n) {
-    return db.id(
+    int id = db.id(
         "INSERT INTO"
             + " usuarios(nombre_completo,curp,telefono,correo,password_hash,tipo_usuario,estado_cuenta,intentos_fallidos)"
             + " VALUES(?,?,?,?,?,'Público general','Activa',0)",
@@ -79,6 +80,8 @@ class WorkflowTest {
         "5555555555",
         "alumno" + n + "@example.invalid",
         encoder.encode("ClaveSegura2026"));
+    ages.record(id, LocalDate.now().minusYears(20));
+    return id;
   }
 
   int call() {
@@ -124,6 +127,394 @@ class WorkflowTest {
             + " espera'",
         base.plusSeconds(1),
         call);
+  }
+
+  @Autowired PlacementService placement;
+
+  private org.springframework.mock.web.MockMultipartFile proof() throws Exception {
+    var image=new java.awt.image.BufferedImage(5,5,java.awt.image.BufferedImage.TYPE_INT_RGB);
+    var bytes=new java.io.ByteArrayOutputStream();javax.imageio.ImageIO.write(image,"png",bytes);
+    return new org.springframework.mock.web.MockMultipartFile("pago","pago.png","image/png",bytes.toByteArray());
+  }
+
+  private int confirmedExam(int actor,int learner,int c,int language) throws Exception {
+    String folio=queue.join(learner,c);mature(c);db.update("UPDATE fila_virtual SET fecha_ingreso=? WHERE folio=?",QueueService.time(db.one("SELECT * FROM convocatorias WHERE id_convocatoria=?",c).get("fecha_inicio_fila")).plusSeconds(1),folio);queue.heartbeat(learner,folio);
+    int id=courseIntake.request(learner,folio,language,"Colocación","","","Básico 1");
+    int group=Db.number(db.one("SELECT * FROM solicitudes_inscripcion WHERE id_solicitud=?",id),"id_grupo");
+    db.update("UPDATE grupos SET profesor='Aplicador',aula='301',dias='5',horario='15:00-17:00' WHERE id_grupo=?",group);
+    payments.submit(learner,id,"EXAMEN-PAGO",LocalDate.now(),new BigDecimal("150.00"),proof(),null);
+    courseIntake.assign(actor,id,group);payments.review(actor,id,"Aprobado","");return id;
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void paymentRequestsAreSeparatedAndCorrectionsReturnToPending() throws Exception {
+    int actor=student(1),c=call(),g=group(c,actor,10);
+    db.update("INSERT INTO roles_permisos(id_usuario,tipo_permiso) VALUES(?,'ADMIN')",actor);
+    var ids=new java.util.LinkedHashMap<String,Integer>();int number=2;
+    for(String state:List.of("Pendiente","Pendiente de revisión","Confirmada","En proceso","Cancelada")){
+      int learner=student(number++);int id=db.id("INSERT INTO solicitudes_inscripcion(folio,id_usuario,id_grupo,estado_inscripcion,monto_calculado) VALUES(?,?,?,'Pendiente',1280)",queue.join(learner,c),learner,g);
+      db.update("UPDATE solicitudes_inscripcion SET estado_inscripcion=? WHERE id_solicitud=?",state,id);ids.put(state,id);
+    }
+    var response=mvc.perform(get("/admin").with(user("alumno1@example.invalid"))).andExpect(status().isOk()).andReturn();
+    var sections=(List<Map<String,Object>>)response.getModelAndView().getModel().get("requestSections");
+    assertEquals(3,sections.size());
+    assertEquals(2,((List<?>)sections.get(0).get("solicitudes")).size());
+    assertEquals(1,((List<?>)sections.get(1).get("solicitudes")).size());
+    assertEquals(2,((List<?>)sections.get(2).get("solicitudes")).size());
+    assertEquals(ids.get("Confirmada"),Db.number(((List<Map<String,Object>>)sections.get(1).get("solicitudes")).get(0),"id_solicitud"));
+    db.update("UPDATE solicitudes_inscripcion SET estado_inscripcion='Pendiente de revisión' WHERE id_solicitud=?",ids.get("En proceso"));
+    response=mvc.perform(get("/admin").with(user("alumno1@example.invalid"))).andExpect(status().isOk()).andReturn();
+    sections=(List<Map<String,Object>>)response.getModelAndView().getModel().get("requestSections");
+    assertEquals(3,((List<?>)sections.get(0).get("solicitudes")).size());
+    assertEquals(1,((List<?>)sections.get(2).get("solicitudes")).size());
+  }
+
+  @Test
+  void examTargetStopsAtAdvancedOneAndIsNotRequestedAgain() throws Exception {
+    int learner=student(1),c=call(),g=group(c,learner,2);
+    int language=Db.number(db.one("SELECT * FROM grupos WHERE id_grupo=?",g),"id_idioma");
+    assertTrue(academicRoutes.examLevels(language).contains("Avanzado 1"));
+    assertFalse(academicRoutes.examLevels(language).contains("Avanzado 2"));
+    assertTrue(academicRoutes.levels(language).contains("Avanzado 6"));
+    String folio=queue.join(learner,c);mature(c);queue.heartbeat(learner,folio);
+    assertThrows(IllegalArgumentException.class,()->courseIntake.request(learner,folio,language,"Colocación","","","Avanzado 2"));
+    int exam=courseIntake.request(learner,folio,language,"Colocación","","","Avanzado 1");
+    assertEquals("Avanzado 1",callOptions.preference(exam).get("nivelSolicitado"));
+    mvc.perform(get("/solicitud/"+exam).with(user("alumno1@example.invalid")))
+      .andExpect(status().isOk()).andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Confirmar nivel solicitado"))));
+  }
+
+  @Test
+  void legacyExamRequiresItsOwnerToChooseLevelBeforeDownloading() throws Exception {
+    int learner=student(1),c=call(),g=group(c,learner,2);
+    int language=Db.number(db.one("SELECT * FROM grupos WHERE id_grupo=?",g),"id_idioma");
+    int id=enrollments.select(learner,queue.join(learner,c),g);
+    db.update("UPDATE grupos SET nivel='Colocación',modalidad='Examen de colocación' WHERE id_grupo=?",g);
+    db.update("UPDATE solicitudes_inscripcion SET estado_inscripcion='Confirmada' WHERE id_solicitud=?",id);
+    callOptions.write(learner,"Preferencia inscripción · "+id,Map.of("version",2,"via","Colocación","nivel","Colocación","modalidad","Examen de colocación","horario","09:00-11:00","convocatoria",c,"idioma",language));
+    mvc.perform(get("/solicitud/"+id).with(user("alumno1@example.invalid")))
+      .andExpect(status().isOk()).andExpect(content().string(org.hamcrest.Matchers.containsString("Confirmar nivel solicitado")));
+    mvc.perform(get("/solicitud/"+id+"/comprobante").with(user("alumno1@example.invalid")))
+      .andExpect(status().isConflict());
+    mvc.perform(post("/solicitud/"+id+"/nivel-solicitado").with(user("alumno1@example.invalid")).with(csrf()).param("nivelExamen","Básico 1"))
+      .andExpect(redirectedUrl("/solicitud/"+id));
+    mvc.perform(get("/solicitud/"+id+"/comprobante").with(user("alumno1@example.invalid")))
+      .andExpect(status().isOk()).andExpect(content().contentType("application/pdf"));
+    assertEquals("Básico 1",callOptions.preference(id).get("nivelSolicitado"));
+  }
+
+  @Test
+  void placementResultCreatesSeparateCoursePaymentAndFinalReceipt() throws Exception {
+    int actor=student(1),learner=student(2),c=configuredCall(actor),g=group(c,actor,2);
+    int language=Db.number(db.one("SELECT * FROM grupos WHERE id_grupo=?",g),"id_idioma");
+    db.update("INSERT INTO roles_permisos(id_usuario,tipo_permiso) VALUES(?,'ADMIN')",actor);
+    admin.group(actor,c,language,"Básico 2","Intensivo","Docente Curso","303","1,3","10:00-12:00",1);
+    int courseGroup=Db.number(db.one("SELECT * FROM grupos WHERE id_convocatoria=? AND nivel='Básico 2'",c),"id_grupo");
+    int exam=confirmedExam(actor,learner,c,language);
+    assertEquals("Básico 1",callOptions.preference(exam).get("nivelSolicitado"));
+    assertThrows(IllegalArgumentException.class,()->placement.chooseLevel(learner,exam,"Avanzado 1"));
+    assertThrows(IllegalArgumentException.class,()->placement.enroll(learner,exam,"Intensivo","10:00-12:00"));
+    placement.publish(actor,exam,"Aprobado","Básico 2","Puede continuar al siguiente nivel.");
+    assertEquals("Básico 2",placement.result(exam).get("nivelAsignado"));
+    byte[] result=placement.resultPdf(exam,learner);var resultReader=new com.lowagie.text.pdf.PdfReader(result);
+    String resultText=new com.lowagie.text.pdf.parser.PdfTextExtractor(resultReader).getTextFromPage(1);resultReader.close();assertTrue(resultText.contains("Básico 1"));assertTrue(resultText.contains("Básico 2"));
+    java.nio.file.Files.write(java.nio.file.Path.of("target/placement-result-preview.pdf"),result);
+    db.update("UPDATE convocatorias SET estado='Cerrada' WHERE id_convocatoria=?",c);
+    int child=placement.enroll(learner,exam,"Intensivo","10:00-12:00");
+    assertNotEquals(exam,child);assertEquals(child,placement.enroll(learner,exam,"Intensivo","10:00-12:00"));
+    assertEquals("Confirmada",db.one("SELECT * FROM solicitudes_inscripcion WHERE id_solicitud=?",exam).get("estado_inscripcion"));
+    assertEquals(new BigDecimal("150.00"),db.one("SELECT * FROM solicitudes_inscripcion WHERE id_solicitud=?",exam).get("monto_calculado"));
+    BigDecimal amount=(BigDecimal)db.one("SELECT * FROM solicitudes_inscripcion WHERE id_solicitud=?",child).get("monto_calculado");assertEquals(new BigDecimal("1500.00"),amount);
+    assertThrows(IllegalArgumentException.class,()->payments.submit(learner,child,"CURSO",LocalDate.now(),new BigDecimal("150.00"),proof(),null));
+    mvc.perform(get("/solicitud/"+child).with(user("alumno2@example.invalid")))
+      .andExpect(status().isOk()).andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("name=\"referencia\""))));
+    mvc.perform(multipart("/solicitud/"+child+"/documentos").file(proof()).with(user("alumno2@example.invalid")).with(csrf())
+      .param("fecha",LocalDate.now().toString()).param("importe",amount.toString()))
+      .andExpect(redirectedUrl("/solicitud/"+child));
+    assertTrue(db.one("SELECT numero_referencia FROM documentos_comprobantes WHERE id_solicitud=?",child).get("numero_referencia").toString().startsWith("ENVIO-"));
+    courseIntake.assign(actor,child,courseGroup);payments.review(actor,child,"Aprobado","");
+    var receipt=db.one("SELECT * FROM comprobantes_oficiales WHERE id_solicitud=?",child);
+    byte[] pdf=java.nio.file.Files.readAllBytes(java.nio.file.Path.of("target/test-storage",(String)receipt.get("url_pdf")));
+    var reader=new com.lowagie.text.pdf.PdfReader(pdf);String text=new com.lowagie.text.pdf.parser.PdfTextExtractor(reader).getTextFromPage(1);reader.close();
+    assertTrue(text.contains("Básico 2"));assertTrue(text.contains("Grupo"));assertTrue(text.contains("Docente Curso"));assertTrue(text.contains("Inicio de clases"));
+    java.nio.file.Files.write(java.nio.file.Path.of("target/placement-course-preview.pdf"),pdf);
+    mvc.perform(get("/solicitud/"+child).with(user("alumno2@example.invalid")))
+      .andExpect(status().isOk()).andExpect(content().string(org.hamcrest.Matchers.containsString("id=\"comprobante\"")))
+      .andExpect(content().string(org.hamcrest.Matchers.containsString("Descargar comprobante final de inscripción")));
+    mvc.perform(get("/solicitud/"+child+"/comprobante").with(user("alumno2@example.invalid")))
+      .andExpect(status().isOk()).andExpect(content().contentType("application/pdf"));
+    mvc.perform(get("/solicitud/"+child+"/comprobante").with(user("alumno1@example.invalid"))).andExpect(status().isForbidden());
+    verify(mail).send(eq("alumno2@example.invalid"),eq("CELEX · Dictamen de inscripción"),org.mockito.ArgumentMatchers.contains("/solicitud/"+child+"/comprobante"));
+
+    assertEquals(2,db.rows("SELECT * FROM documentos_comprobantes WHERE id_solicitud IN (?,?)",exam,child).size());
+    assertEquals(0,Db.number(db.one("SELECT * FROM grupos WHERE id_grupo=?",courseGroup),"cupo_disponible"));
+    mvc.perform(get("/solicitud/"+exam).with(user("alumno2@example.invalid"))).andExpect(status().isOk());
+    mvc.perform(get("/admin/examenes").with(user("alumno1@example.invalid"))).andExpect(status().isOk());
+  }
+
+  @Test
+  void twoPlacementResultsCompeteForOneCourseSeatWithoutDuplicatingExamPayments() throws Exception {
+    int actor=student(1),first=student(2),second=student(3),c=configuredCall(actor),g=group(c,actor,2);
+    int language=Db.number(db.one("SELECT * FROM grupos WHERE id_grupo=?",g),"id_idioma");
+    admin.group(actor,c,language,"Básico 2","Intensivo","Docente Curso","303","1,3","10:00-12:00",1);
+    int e1=confirmedExam(actor,first,c,language),e2=confirmedExam(actor,second,c,language);
+    placement.publish(actor,e1,"Aprobado","Básico 2","");placement.publish(actor,e2,"Aprobado","Básico 2","");
+    var pool=Executors.newFixedThreadPool(2);var gate=new CountDownLatch(1);
+    try {
+      var futures=new ArrayList<Future<Integer>>();
+      for(var pair:List.of(new int[]{first,e1},new int[]{second,e2}))futures.add(pool.submit(()->{gate.await();try{return placement.enroll(pair[0],pair[1],"Intensivo","10:00-12:00");}catch(IllegalArgumentException unavailable){return -1;}}));
+      gate.countDown();int successes=0;for(var future:futures)if(future.get(30,TimeUnit.SECONDS)>0)successes++;
+      assertEquals(1,successes);assertEquals(3,db.rows("SELECT * FROM solicitudes_inscripcion").size());
+      assertEquals(0,Db.number(db.one("SELECT * FROM grupos WHERE id_convocatoria=? AND nivel='Básico 2'",c),"cupo_disponible"));
+      assertEquals(2,db.rows("SELECT * FROM documentos_comprobantes WHERE id_solicitud IN (?,?)",e1,e2).size());
+    }finally{pool.shutdownNow();}
+  }
+
+  @Test
+  void placementSelectionAndResultCannotBeForgedByAnotherStudent() throws Exception {
+    int actor=student(1),learner=student(2),other=student(3),c=configuredCall(actor),g=group(c,actor,2);
+    int language=Db.number(db.one("SELECT * FROM grupos WHERE id_grupo=?",g),"id_idioma");
+    int exam=confirmedExam(actor,learner,c,language);
+    assertThrows(org.springframework.security.access.AccessDeniedException.class,()->placement.chooseLevel(other,exam,"Básico 1"));
+    assertThrows(org.springframework.security.access.AccessDeniedException.class,()->placement.enroll(other,exam,"Sabatino","09:00-11:00"));
+    mvc.perform(post("/admin/solicitudes/"+exam+"/resultado-examen").with(user("alumno2@example.invalid")).with(csrf()).param("resultado","Aprobado").param("nivelAsignado","Avanzado 6"))
+      .andExpect(status().isForbidden());
+    assertThrows(IllegalArgumentException.class,()->placement.publish(actor,exam,"Aprobado","Avanzado 2",""));
+    placement.publish(actor,exam,"No aprobado","Introductorio","Nivel inicial asignado por CELEX.");
+    assertEquals("Introductorio",placement.result(exam).get("nivelAsignado"));
+    assertTrue(((List<?>)placement.view(exam,learner).get("grupos")).isEmpty());
+    assertThrows(org.springframework.security.access.AccessDeniedException.class,()->placement.resultPdf(exam,other));
+    verify(mail).send(eq("alumno2@example.invalid"),eq("CELEX · Resultado de examen de colocación"),org.mockito.ArgumentMatchers.contains("Introductorio"));
+  }
+
+  @Autowired ReceiptService receipts;
+
+  @Test
+  void placementReceiptContainsOnlyRequestedExamFieldsAndKeepsInstitutionalHeader() throws Exception {
+    var fields=new HashMap<String,Object>();
+    fields.put("folio","EXAM2026");fields.put("nombre_completo","Pérez López Ana María");fields.put("idioma","Inglés");fields.put("nivel","Colocación");fields.put("nivel_examen","Intermedio 2");fields.put("modalidad","Examen de colocación");fields.put("profesor","Docente de examen");fields.put("aula","A-102");fields.put("dias","6");fields.put("horario","09:00-11:00");fields.put("monto_calculado",new BigDecimal("150.00"));
+    byte[] pdf=ReceiptService.pdf(fields,"http://localhost:8080/validar/ejemplo");
+    var reader=new com.lowagie.text.pdf.PdfReader(pdf);
+    String text=new com.lowagie.text.pdf.parser.PdfTextExtractor(reader).getTextFromPage(1);
+    assertEquals(1,reader.getNumberOfPages());
+    for(String value:List.of("INSTITUTO POLITÉCNICO NACIONAL","ESIME Culhuacán","EXAM2026","Intermedio 2","Examen por colocación","sábado","09:00-11:00"))assertTrue(text.contains(value),value);
+    assertFalse(text.contains("Cuota"));assertFalse(text.contains("Modalidad"));assertFalse(text.contains("150.00"));
+    reader.close();java.nio.file.Files.write(java.nio.file.Path.of("target/exam-receipt-preview.pdf"),pdf);
+  }
+
+  @Test
+  void refreshedReceiptKeepsItsQrAndDoesNotDuplicateOfficialRecords() throws Exception {
+    int owner=student(1),other=student(2),c=call(),g=group(c,owner,3);
+    String folio=queue.join(owner,c);int request=enrollments.select(owner,folio,g);
+    db.update("UPDATE grupos SET nivel='Colocación',modalidad='Examen de colocación' WHERE id_grupo=?",g);
+    db.update("UPDATE solicitudes_inscripcion SET estado_inscripcion='Confirmada' WHERE id_solicitud=?",request);
+    callOptions.write(owner,"Preferencia inscripción · "+request,Map.of("via","Colocación","nivelSolicitado","Básico 1"));
+    courseIntake.examLevel(owner,request,"Básico 1");receipts.issue(request);
+    var before=db.one("SELECT * FROM comprobantes_oficiales WHERE id_solicitud=?",request);
+    receipts.refreshForOwner(request,owner);
+    assertEquals(before.get("url_pdf"),db.one("SELECT * FROM comprobantes_oficiales WHERE id_solicitud=?",request).get("url_pdf"));
+    assertThrows(IllegalArgumentException.class,()->courseIntake.examLevel(owner,request,"Intermedio 2"));
+    db.update("UPDATE grupos SET aula='204' WHERE id_grupo=?",g);receipts.refreshForOwner(request,owner);
+    var after=db.one("SELECT * FROM comprobantes_oficiales WHERE id_solicitud=?",request);
+    assertEquals(before.get("codigo_qr"),after.get("codigo_qr"));assertNotEquals(before.get("url_pdf"),after.get("url_pdf"));
+    assertEquals(1,db.rows("SELECT * FROM comprobantes_oficiales WHERE id_solicitud=?",request).size());
+    assertThrows(org.springframework.security.access.AccessDeniedException.class,()->receipts.refreshForOwner(request,other));
+    assertThrows(IllegalArgumentException.class,()->courseIntake.examLevel(owner,request,"Nivel inventado"));
+    mvc.perform(get("/registro")).andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Pruebas públicas"))));
+  }
+
+  @Test
+  void scholarshipDictamenRequiresVerifiedIpnAndTheirApplicationForTheSameCall() throws Exception {
+    int actor=student(1),external=student(2),ipn=student(3),c=call(),other=call();
+    db.update("INSERT INTO roles_permisos(id_usuario,tipo_permiso) VALUES(?,'ADMIN')",actor);
+    assertThrows(IllegalArgumentException.class,()->scholarships.apply(external,c));
+    assertThrows(IllegalArgumentException.class,()->scholarships.record(actor,external,c,"Beneficiario",""));
+    db.update("UPDATE usuarios SET tipo_usuario='Comunidad IPN' WHERE id_usuario=?",ipn);
+    assertThrows(IllegalArgumentException.class,()->scholarships.record(actor,ipn,c,"Beneficiario",""));
+    scholarships.apply(ipn,c);scholarships.apply(ipn,c);
+    assertEquals(1,db.rows("SELECT * FROM bitacora_acciones WHERE accion=?","Solicitud beca · "+c+" · "+ipn).size());
+    assertThrows(IllegalArgumentException.class,()->scholarships.record(actor,ipn,other,"Beneficiario",""));
+    scholarships.record(actor,ipn,c,"Beneficiario","Validada");
+    assertEquals("Beneficiario",scholarships.status(ipn,c));
+    assertEquals("No beneficiario",scholarships.status(external,c));
+    mvc.perform(get("/perfil").with(user("alumno2@example.invalid")))
+      .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Solicitar beca para esta convocatoria"))));
+    int event=Db.number(db.one("SELECT * FROM bitacora_acciones WHERE accion=?","Solicitud beca · "+c+" · "+ipn),"id_bitacora");
+    assertThrows(IllegalArgumentException.class,()->extras.clearActivities(actor,List.of(event)));
+  }
+
+  @Test
+  void configuredEnglishExamCanBeCreatedAndAssignedAfterPayment() throws Exception {
+    int actor=student(1),learner=student(2),c=configuredCall(actor),g=group(c,actor,4);
+    int language=Db.number(db.one("SELECT * FROM grupos WHERE id_grupo=?",g),"id_idioma");
+    String folio=queue.join(learner,c);mature(c);db.update("UPDATE fila_virtual SET fecha_ingreso=? WHERE folio=?",QueueService.time(db.one("SELECT * FROM convocatorias WHERE id_convocatoria=?",c).get("fecha_inicio_fila")).plusSeconds(1),folio);queue.heartbeat(learner,folio);
+    int request=courseIntake.request(learner,folio,language,"Colocación","","", "Básico 1");
+    admin.group(actor,c,language,"Colocación","Examen de colocación","Aplicador","301","5","15:00-17:00",10);
+    int exam=Db.number(db.one("SELECT * FROM grupos WHERE id_convocatoria=? AND profesor='Aplicador'",c),"id_grupo");
+    assertTrue(courseIntake.assignable(request).stream().anyMatch(row->Db.number(row,"id_grupo")==exam));
+    db.update("UPDATE solicitudes_inscripcion SET estado_inscripcion='Pendiente de revisión' WHERE id_solicitud=?",request);
+    assertThrows(IllegalArgumentException.class,()->courseIntake.assign(actor,request,exam,"Avanzado 6"));
+    courseIntake.assign(actor,request,exam,"Básico 1");
+    assertEquals(exam,Db.number(db.one("SELECT * FROM solicitudes_inscripcion WHERE id_solicitud=?",request),"id_grupo"));
+    assertEquals(9,Db.number(db.one("SELECT * FROM grupos WHERE id_grupo=?",exam),"cupo_disponible"));
+  }
+
+  @Test
+  void expiredCallActivationReturnsInlineFeedbackAndKeepsDates() throws Exception {
+    int actor=student(1),c=call();
+    db.update("INSERT INTO roles_permisos(id_usuario,tipo_permiso) VALUES(?,'ADMIN')",actor);
+    var end=LocalDateTime.now().minusDays(1).withNano(0);
+    db.update("UPDATE convocatorias SET fecha_inicio_fila=?,fecha_fin_fila=? WHERE id_convocatoria=?",end.minusDays(1),end,c);
+    mvc.perform(post("/admin/convocatorias/"+c+"/habilitar").with(user("alumno1@example.invalid")).with(csrf()))
+      .andExpect(redirectedUrl("/admin#convocatorias"))
+      .andExpect(flash().attributeExists("callError"));
+    assertEquals(end.withNano(0),QueueService.time(db.one("SELECT * FROM convocatorias WHERE id_convocatoria=?",c).get("fecha_fin_fila")).withNano(0));
+    mvc.perform(get("/admin").with(user("alumno1@example.invalid")))
+      .andExpect(status().isOk())
+      .andExpect(content().string(org.hamcrest.Matchers.containsString("Vencida")))
+      .andExpect(content().string(org.hamcrest.Matchers.containsString("Esta convocatoria ya venció")));
+  }
+
+  @Test
+  void activationRequiresActiveLanguageAndConsistentClassDates() {
+    int actor=student(1),c=configuredCall(actor),g=group(c,actor,2);
+    db.update("UPDATE idiomas SET activo=FALSE WHERE id_idioma=(SELECT id_idioma FROM grupos WHERE id_grupo=?)",g);
+    assertFalse(callManagement.activationIssue(c).isEmpty());
+    assertThrows(IllegalArgumentException.class,()->callManagement.enable(actor,c));
+    db.update("UPDATE idiomas SET activo=TRUE");
+    assertEquals("",callManagement.activationIssue(c));
+    callManagement.enable(actor,c);
+    db.update("UPDATE convocatorias SET fecha_fin_fila=? WHERE id_convocatoria=?",LocalDateTime.now().plusDays(4),c);
+    assertThrows(IllegalArgumentException.class,()->callManagement.enable(actor,c));
+  }
+
+  @Test
+  void tenSelectionSlotsRespectPriorityAndAdmitTheNextAfterExpiration() {
+    int actor=student(1), c=configuredCall(actor), g=group(c,actor,20);
+    db.update("UPDATE grupos SET nivel='Introductorio' WHERE id_grupo=?",g);
+    var users=new ArrayList<Integer>();var folios=new ArrayList<String>();
+    for(int n=2;n<=13;n++){int u=student(n);users.add(u);folios.add(queue.join(u,c));}
+    db.update("INSERT INTO prioridades_usuario(id_usuario,es_becario,puntaje_beca) VALUES(?,TRUE,100)",users.get(11));
+    mature(c);
+    var active=new ArrayList<Integer>();var waiting=new ArrayList<Integer>();
+    for(int n=0;n<users.size();n++){
+      var turn=queue.heartbeat(users.get(n),folios.get(n));
+      if("Atendiendo".equals(turn.get("estado_turno")))active.add(n);else waiting.add(n);
+    }
+    assertEquals(10,active.size());assertEquals(2,waiting.size());
+    assertEquals(1,Db.number(queue.heartbeat(users.get(11),folios.get(11)),"posicion_actual"));
+    int lang=Db.number(db.one("SELECT * FROM grupos WHERE id_grupo=?",g),"id_idioma");
+    int blocked=waiting.get(0);
+    assertThrows(IllegalArgumentException.class,()->courseIntake.request(users.get(blocked),folios.get(blocked),lang,"Inicial","Sabatino","09:00-11:00"));
+    db.update("UPDATE fila_virtual SET reserva_expira_en=? WHERE folio=?",LocalDateTime.now().minusSeconds(1),folios.get(active.get(0)));
+    assertEquals("Atendiendo",queue.heartbeat(users.get(blocked),folios.get(blocked)).get("estado_turno"));
+    assertEquals(10,db.rows("SELECT * FROM fila_virtual WHERE id_convocatoria=? AND estado_turno='Atendiendo'",c).size());
+    assertTrue(db.rows("SELECT * FROM solicitudes_inscripcion").isEmpty());
+  }
+
+  @Test
+  void tenUsersCanSubmitPreferencesConcurrentlyWithoutOverbooking() throws Exception {
+    int actor=student(1),c=call(),g=group(c,actor,10);
+    db.update("UPDATE grupos SET nivel='Introductorio' WHERE id_grupo=?",g);
+    int lang=Db.number(db.one("SELECT * FROM grupos WHERE id_grupo=?",g),"id_idioma");
+    var users=new ArrayList<Integer>();var folios=new ArrayList<String>();
+    for(int n=2;n<=12;n++){int u=student(n);users.add(u);folios.add(queue.join(u,c));}
+    for(int n=0;n<10;n++)assertEquals("Atendiendo",queue.heartbeat(users.get(n),folios.get(n)).get("estado_turno"));
+    assertEquals("En espera",queue.heartbeat(users.get(10),folios.get(10)).get("estado_turno"));
+    var pool=Executors.newFixedThreadPool(10);var gate=new CountDownLatch(1);
+    try{
+      var pending=new ArrayList<Future<Integer>>();
+      for(int n=0;n<10;n++){final int index=n;pending.add(pool.submit(()->{gate.await();return courseIntake.request(users.get(index),folios.get(index),lang,"Inicial","Sabatino","09:00-11:00");}));}
+      gate.countDown();var ids=new HashSet<Integer>();for(var future:pending)ids.add(future.get(30,TimeUnit.SECONDS));
+      assertEquals(10,ids.size());
+      assertEquals(0,Db.number(db.one("SELECT * FROM grupos WHERE id_grupo=?",g),"cupo_disponible"));
+      assertEquals(10,db.rows("SELECT * FROM solicitudes_inscripcion WHERE id_grupo=?",g).size());
+      assertEquals("Atendiendo",queue.heartbeat(users.get(10),folios.get(10)).get("estado_turno"));
+    }finally{pool.shutdownNow();}
+  }
+
+  @Test
+  void existingCallOffersEntryCoursesAndPlacementToNewUsersWithoutManualHistory() throws Exception {
+    int actor=student(1), learner=student(2), c=call(), english=group(c,actor,4);
+    db.update("UPDATE grupos SET nivel='Introductorio' WHERE id_grupo=?",english);
+    int lang=Db.number(db.one("SELECT * FROM grupos WHERE id_grupo=?",english),"id_idioma");
+    int italian=db.id("INSERT INTO idiomas(nombre) VALUES('Italiano')");
+    db.update("INSERT INTO grupos(id_convocatoria,id_idioma,nivel,modalidad,profesor,aula,dias,horario,cupo_total,cupo_disponible) VALUES(?,?,'Básico 1','Intensivo','Docente','202','1,2','08:30-14:00',25,25)",c,italian);
+    assertFalse(callOptions.managed(c));
+    String folio=queue.join(learner,c);
+    mvc.perform(get("/fila/"+folio).with(user("alumno2@example.invalid")))
+      .andExpect(status().isOk())
+      .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Turno asignado:"))))
+      .andExpect(content().string(org.hamcrest.Matchers.containsString("data-position")));
+    mvc.perform(get("/fila/"+folio+"/grupos").with(user("alumno2@example.invalid")))
+      .andExpect(status().isOk()).andExpect(view().name("preferencias"))
+      .andExpect(content().string(org.hamcrest.Matchers.containsString("Introductorio")))
+      .andExpect(content().string(org.hamcrest.Matchers.containsString("Italiano")))
+      .andExpect(content().string(org.hamcrest.Matchers.containsString("Básico 1")))
+      .andExpect(content().string(org.hamcrest.Matchers.containsString("08:30-14:00")));
+    int request=courseIntake.request(learner,folio,lang,"Inicial","Sabatino","09:00-11:00");
+    assertEquals("Inicial",callOptions.preference(request).get("via"));
+    mvc.perform(get("/solicitud/"+request).with(user("alumno2@example.invalid")))
+      .andExpect(status().isOk()).andExpect(view().name("solicitud-v2"));
+    int other=student(3);String second=queue.join(other,c);
+    int exam=courseIntake.request(other,second,italian,"Colocación","","", "Básico 1");
+    assertEquals(new BigDecimal("150.00"), db.one("SELECT monto_calculado FROM solicitudes_inscripcion WHERE id_solicitud=?",exam).get("monto_calculado"));
+    assertTrue(db.rows("SELECT * FROM historial_academico WHERE id_usuario=?",learner).isEmpty());
+  }
+
+  @Test
+  void minimumAgeAcceptsFifteenthBirthdayAndRejectsYoungerOrMissingDates() {
+    var today = LocalDate.now();
+    assertDoesNotThrow(() -> ages.validate(today.minusYears(15)));
+    assertThrows(IllegalArgumentException.class, () -> ages.validate(today.minusYears(15).plusDays(1)));
+    assertThrows(IllegalArgumentException.class, () -> ages.validate(today.plusDays(1)));
+    assertThrows(IllegalArgumentException.class, () -> ages.validate(null));
+  }
+
+  @Test
+  void minorRegistrationDoesNotCreateAnAccountOrSendMail() {
+    var minor = new Registration("Menor Prueba", "GAML000101HDFRNS09", "5555555555",
+        "menor@example.invalid", "ClaveSegura2026", LocalDate.now().minusYears(14));
+    assertThrows(IllegalArgumentException.class, () -> accounts.register(minor));
+    assertTrue(db.rows("SELECT * FROM usuarios").isEmpty());
+    verifyNoInteractions(mail);
+  }
+
+  @Test
+  void oldAccountsCompleteBirthDateBeforeReservingAndCannotOverwriteIt() throws Exception {
+    int learner = student(1), c = call(), g = group(c, learner, 2);
+    db.update("DELETE FROM bitacora_acciones WHERE accion=?", "Fecha nacimiento · " + learner);
+    mvc.perform(post("/fila").param("convocatoria", "" + c)
+        .with(user("alumno1@example.invalid")).with(csrf()))
+        .andExpect(redirectedUrl("/perfil#edad"));
+    String folio = queue.join(learner, c);
+    assertThrows(IllegalArgumentException.class, () -> enrollments.select(learner, folio, g));
+    assertTrue(db.rows("SELECT * FROM solicitudes_inscripcion").isEmpty());
+    assertEquals(2, Db.number(db.one("SELECT * FROM grupos WHERE id_grupo=?",g),"cupo_disponible"));
+    mvc.perform(get("/perfil").with(user("alumno1@example.invalid")))
+        .andExpect(status().isOk());
+    mvc.perform(post("/perfil/edad").param("fechaNacimiento",LocalDate.now().minusYears(15).toString())
+        .with(user("alumno1@example.invalid")).with(csrf()))
+        .andExpect(redirectedUrl("/perfil#edad"));
+    assertTrue(ages.eligible(learner));
+    assertThrows(IllegalArgumentException.class, () -> ages.record(learner,LocalDate.now().minusYears(30)));
+    assertNotNull(enrollments.select(learner,folio,g));
+    int event = Db.number(db.one("SELECT * FROM bitacora_acciones WHERE accion=?", "Fecha nacimiento · " + learner),"id_bitacora");
+    assertThrows(IllegalArgumentException.class, () -> extras.clearActivities(learner,List.of(event)));
+  }
+
+  @Test
+  void publicContactAndPriorityNoticeArePresentWithoutGrantingGeneralPriority() throws Exception {
+    int learner=student(1), c=configuredCall(learner);
+    db.update("INSERT INTO prioridades_usuario(id_usuario,es_alumno_nuevo,es_becario,promedio_anterior) VALUES(?,FALSE,FALSE,0)",learner);
+    String folio=queue.join(learner,c);mature(c);
+    assertEquals(false,queue.heartbeat(learner,folio).get("tiene_prioridad"));
+    mvc.perform(get("/fila/"+folio).with(user("alumno1@example.invalid")))
+        .andExpect(status().isOk())
+        .andExpect(content().string(org.hamcrest.Matchers.containsString("data-priority hidden")))
+        .andExpect(content().string(org.hamcrest.Matchers.containsString("mailto:celex0511@gmail.com")))
+        .andExpect(content().string(org.hamcrest.Matchers.containsString("tel:5537871513")));
   }
 
   @Test
@@ -330,7 +721,7 @@ class WorkflowTest {
     assertEquals(2, Db.number(queue.heartbeat(normal, first), "numero_turno"));
     assertEquals(Boolean.TRUE, high.get("tiene_prioridad"));
     assertEquals(
-        1,
+        2,
         db.rows(
                 "SELECT id_turno FROM fila_virtual WHERE id_convocatoria=? AND"
                     + " estado_turno='Atendiendo'",
@@ -445,7 +836,7 @@ class WorkflowTest {
     String folio = queue.join(novice, c);
     mature(c);
     queue.heartbeat(novice, folio);
-    int id = courseIntake.request(novice, folio, language, "Colocación", "", "");
+    int id = courseIntake.request(novice, folio, language, "Colocación", "", "", "Básico 1");
     assertEquals(
         new BigDecimal("150.00"),
         db.one("SELECT * FROM solicitudes_inscripcion WHERE id_solicitud=?", id)
@@ -490,6 +881,8 @@ class WorkflowTest {
     int language = db.id("INSERT INTO idiomas(nombre,activo) VALUES('Alemán',TRUE)");
     assertEquals("Alemán", studentPortal.curriculum(user, language).get("idioma"));
     assertEquals(1, studentPortal.curriculum(user, language).get("total"));
+    db.update("UPDATE usuarios SET tipo_usuario='Comunidad IPN' WHERE id_usuario=?",user);
+    scholarships.apply(user,c);
     scholarships.record(actor, user, c, "Beneficiario", "Beca validada");
     mvc.perform(get("/perfil").with(user("alumno2@example.invalid")))
         .andExpect(
@@ -614,7 +1007,7 @@ class WorkflowTest {
     assertEquals(5, Db.number(queue.heartbeat(rest, r), "posicion_actual"));
     assertEquals(6, Db.number(queue.heartbeat(ipn, i), "posicion_actual"));
     mvc.perform(get("/fila/" + e).with(user("alumno3@example.invalid")))
-        .andExpect(content().string(org.hamcrest.Matchers.containsString("Prioridad aplicada:")));
+        .andExpect(content().string(org.hamcrest.Matchers.containsString("Tienes prioridad:")));
   }
 
   @Test
@@ -630,7 +1023,7 @@ class WorkflowTest {
     assertEquals(1, Db.number(turn, "posicion_actual"));
     assertEquals(current, queue.join(b, c));
     mvc.perform(get("/fila/" + current).with(user("alumno2@example.invalid")))
-        .andExpect(content().string(org.hamcrest.Matchers.containsString("Turno asignado:")));
+        .andExpect(content().string(org.hamcrest.Matchers.containsString("Posición actual")));
   }
 
   @Test
@@ -753,7 +1146,7 @@ class WorkflowTest {
   void registrationAndSingleUseCode() {
     accounts.register(
         new Registration(
-            "Alumno", "", "5555555555", "alumno@ipn.mx", "ClaveSegura2026", "IPN", "2026123456"));
+            "Alumno", "", "5555555555", "alumno@ipn.mx", "ClaveSegura2026", "IPN", "2026123456", LocalDate.now().minusYears(20)));
     var u = db.one("SELECT * FROM usuarios");
     assertNotEquals("ClaveSegura2026", u.get("password_hash"));
     assertEquals("Inactiva", u.get("estado_cuenta"));
@@ -894,6 +1287,8 @@ class WorkflowTest {
     int u = student(1), c = call(), g = group(c, u, 1);
     String folio = queue.join(u, c);
     int id = enrollments.select(u, folio, g);
+    db.update("UPDATE usuarios SET tipo_usuario='Comunidad IPN' WHERE id_usuario=?",u);
+    scholarships.apply(u,c);
     payments.scholarship(u, id, "Beneficiario");
     assertEquals(
         0,
@@ -1051,7 +1446,7 @@ class WorkflowTest {
                     "alumno@ipn.mx",
                     "ClaveSegura2026",
                     "IPN",
-                    "2026123456")));
+                    "2026123456", LocalDate.now().minusYears(20))));
     assertTrue(db.rows("SELECT * FROM usuarios").isEmpty());
     assertTrue(db.rows("SELECT * FROM verificaciones_codigo").isEmpty());
   }
@@ -1117,7 +1512,9 @@ class WorkflowTest {
   @Test
   void liveOffersRespectOwnershipAndTurn() throws Exception {
     int a = student(1), b = student(2), c = call(), g = group(c, a, 1);
-    String fa = queue.join(a, c), fb = queue.join(b, c);
+    String fa = queue.join(a, c);
+    for(int n=3;n<=11;n++) queue.join(student(n),c);
+    String fb = queue.join(b, c);
     mvc.perform(get("/fila/" + fb + "/oferta").with(user("alumno2@example.invalid")))
         .andExpect(status().isConflict())
         .andExpect(
@@ -1207,6 +1604,8 @@ class WorkflowTest {
   @Test
   void preawardAndIndependentDocumentReview() throws Exception {
     int u = student(1), c = call(), g = group(c, u, 1);
+    db.update("UPDATE usuarios SET tipo_usuario='Comunidad IPN' WHERE id_usuario=?",u);
+    scholarships.apply(u,c);
     scholarships.record(u, u, c, "Beneficiario", "Validada antes de elegir");
     int id = enrollments.select(u, queue.join(u, c), g);
     var request = db.one("SELECT * FROM solicitudes_inscripcion WHERE id_solicitud=?", id);
@@ -1237,6 +1636,11 @@ class WorkflowTest {
             db.one("SELECT * FROM documentos_comprobantes WHERE id_solicitud=?", id));
     assertEquals("Aprobado", assessment.payment());
     assertEquals("Rechazado", assessment.identity());
+    var rejectedRow=db.one("SELECT * FROM documentos_comprobantes WHERE id_solicitud=?",id);
+    var deadline=QueueService.time(db.one("SELECT * FROM solicitudes_inscripcion WHERE id_solicitud=?",id).get("prorroga_expira_en"));
+    assertEquals(QueueService.time(rejectedRow.get("fecha_dictamen")).plusHours(48),deadline);
+    verify(mail).send(eq("alumno1@example.invalid"),eq("CELEX · Dictamen de inscripción"),org.mockito.ArgumentMatchers.contains("48 horas desde este rechazo"));
+
     assertEquals("Identificación ilegible", assessment.identityNote());
     assertEquals(
         "En proceso",
@@ -1257,7 +1661,7 @@ class WorkflowTest {
   @Test
   void holidaysAndLegacyAssessment() {
     assertEquals(
-        LocalDateTime.of(2026, 11, 18, 12, 0),
+        LocalDateTime.of(2026, 11, 15, 12, 0),
         new BusinessCalendar("2026-11-16")
             .correctionDeadline(LocalDateTime.of(2026, 11, 13, 12, 0)));
     var legacy =
@@ -1396,6 +1800,7 @@ class WorkflowTest {
   void waitingRoomLocksSectionsAcrossSessionsWithoutChangingTurn() throws Exception {
     int first = student(1), waiting = student(2), c = call(), other = call();
     queue.join(first, c);
+    for(int n=3;n<=11;n++) queue.join(student(n),c);
     String folio = queue.join(waiting, c);
     String path = "/fila/" + folio;
     mvc.perform(get("/panel").with(user("alumno2@example.invalid")))
@@ -1437,7 +1842,7 @@ class WorkflowTest {
     mvc.perform(post(path + "/latido").with(user("alumno2@example.invalid")).with(csrf()))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.folio").value(folio))
-        .andExpect(jsonPath("$.posicion_actual").value(2));
+        .andExpect(jsonPath("$.posicion_actual").value(11));
     mvc.perform(
             get("/panel")
                 .session(new org.springframework.mock.web.MockHttpSession())
@@ -1490,7 +1895,7 @@ class WorkflowTest {
   void resumeActivationAfterDisconnectAndResendWithoutDuplicateAccount() throws Exception {
     String email = "pendiente@example.invalid", password = "ClaveSegura2026";
     accounts.register(
-        new Registration("Cuenta pendiente", "GAML000101HDFRNS09", "5555555555", email, password));
+        new Registration("Cuenta pendiente", "GAML000101HDFRNS09", "5555555555", email, password, LocalDate.now().minusYears(20)));
     int id = Db.number(db.one("SELECT * FROM usuarios WHERE correo=?", email), "id_usuario");
     var initial = db.one("SELECT * FROM verificaciones_codigo WHERE id_usuario=?", id);
     String oldCode = (String) initial.get("codigo");
@@ -1572,7 +1977,7 @@ class WorkflowTest {
     String email = "reintento@example.invalid";
     accounts.register(
         new Registration(
-            "Cuenta pendiente", "GAML000101HDFRNS09", "5555555555", email, "ClaveSegura2026"));
+            "Cuenta pendiente", "GAML000101HDFRNS09", "5555555555", email, "ClaveSegura2026", LocalDate.now().minusYears(20)));
     int id = Db.number(db.one("SELECT * FROM usuarios WHERE correo=?", email), "id_usuario");
     db.update(
         "UPDATE verificaciones_codigo SET expira_en=? WHERE id_usuario=?",
@@ -1617,7 +2022,7 @@ class WorkflowTest {
         IllegalArgumentException.class,
         () -> AccountService.validatePassword("Á1" + "á".repeat(40)));
     mvc.perform(
-            post("/registro")
+            post("/registro").param("fechaNacimiento", LocalDate.now().minusYears(20).toString())
                 .with(csrf())
                 .param("nombre", "García López Ana")
                 .param("tipoRegistro", "EXTERNO")
@@ -1639,7 +2044,7 @@ class WorkflowTest {
                     "ana@example.invalid",
                     "Clave123",
                     "IPN",
-                    "2026123456")));
+                    "2026123456", LocalDate.now().minusYears(20))));
     assertThrows(
         IllegalArgumentException.class,
         () ->
@@ -1649,7 +2054,7 @@ class WorkflowTest {
                     "GAML000101HDFRNS09",
                     "5555555555",
                     "ana@alumno.ipn.mx",
-                    "Clave123")));
+                    "Clave123", LocalDate.now().minusYears(20))));
     assertThrows(
         IllegalArgumentException.class,
         () ->
@@ -1661,7 +2066,7 @@ class WorkflowTest {
                     "ana@alumno.ipn.mx",
                     "Clave123",
                     "IPN",
-                    "1234")));
+                    "1234", LocalDate.now().minusYears(20))));
     assertTrue(db.rows("SELECT * FROM usuarios").isEmpty());
   }
 
@@ -1673,7 +2078,7 @@ class WorkflowTest {
             "GAML000101HDFRNS09",
             "5555555555",
             "externo@example.invalid",
-            "Clave123"));
+            "Clave123", LocalDate.now().minusYears(20)));
     accounts.register(
         new Registration(
             "Aguirre López Luis",
@@ -1682,7 +2087,7 @@ class WorkflowTest {
             "alumno@alumno.ipn.mx",
             "Clave123",
             "IPN",
-            "2026123456"));
+            "2026123456", LocalDate.now().minusYears(20)));
     var external = db.one("SELECT * FROM usuarios WHERE correo='externo@example.invalid'");
     var ipn = db.one("SELECT * FROM usuarios WHERE correo='alumno@alumno.ipn.mx'");
     assertNull(external.get("boleta"));
@@ -1700,7 +2105,7 @@ class WorkflowTest {
                     "otro@alumno.ipn.mx",
                     "Clave123",
                     "IPN",
-                    "2026123456")));
+                    "2026123456", LocalDate.now().minusYears(20))));
     accounts.register(
         new Registration(
             "Barrera Pérez Eva",
@@ -1709,7 +2114,7 @@ class WorkflowTest {
             "eva@alumno.ipn.mx",
             "Clave123",
             "IPN",
-            "2026123457"));
+            "2026123457", LocalDate.now().minusYears(20)));
     assertEquals(2, db.rows("SELECT * FROM usuarios WHERE curp IS NULL").size());
     String code =
         (String)
@@ -1749,7 +2154,7 @@ class WorkflowTest {
                     org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("class=\"flow\""))));
     mvc.perform(
-            post("/registro")
+            post("/registro").param("fechaNacimiento", LocalDate.now().minusYears(20).toString())
                 .session(session)
                 .with(csrf())
                 .param("nombre", "García López Ana")
@@ -2024,7 +2429,7 @@ class WorkflowTest {
                 .string(
                     org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("priority-ladder"))))
-        .andExpect(content().string(org.hamcrest.Matchers.containsString("Prioridad aplicada")));
+        .andExpect(content().string(org.hamcrest.Matchers.containsString("Tienes prioridad")));
     assertEquals(
         4,
         Db.number(
@@ -2033,13 +2438,13 @@ class WorkflowTest {
     mvc.perform(get("/fila/" + folio + "/grupos").with(user("alumno1@example.invalid")))
         .andExpect(status().isOk())
         .andExpect(
-            content().string(org.hamcrest.Matchers.containsString("data-offer-filter=\"dia\"")))
+            content().string(org.hamcrest.Matchers.containsString("id=\"intake-language\"")))
         .andExpect(
-            content().string(org.hamcrest.Matchers.containsString("data-offer-filter=\"horario\"")))
+            content().string(org.hamcrest.Matchers.containsString("name=\"horario\"")))
         .andExpect(
             content()
                 .string(
-                    org.hamcrest.Matchers.containsString("data-offer-filter=\"disponibilidad\"")));
+                    org.hamcrest.Matchers.containsString("name=\"modalidad\"")));
     for (String section : List.of("/perfil", "/calendario", "/mapa-curricular", "/pagos"))
       mvc.perform(get(section).with(user("alumno1@example.invalid")))
           .andExpect(redirectedUrl("/fila/" + folio));

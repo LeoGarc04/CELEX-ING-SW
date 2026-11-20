@@ -23,7 +23,7 @@ public record Registration(
     @NotBlank(message = "Selecciona alumno del IPN o público en general")
         @Pattern(regexp = "IPN|EXTERNO", message = "Tipo de registro inválido")
         String tipoRegistro,
-    String boleta) {
+    String boleta, java.time.LocalDate fechaNacimiento) {
   public Registration {
     curp = curp == null ? "" : curp.trim().toUpperCase(java.util.Locale.ROOT);
     boleta = boleta == null ? "" : boleta.trim();
@@ -32,6 +32,16 @@ public record Registration(
 
   public Registration(String nombre, String curp, String telefono, String correo, String password) {
     this(nombre, curp, telefono, correo, password, "EXTERNO", "");
+  }
+
+  public Registration(String nombre, String curp, String telefono, String correo, String password,
+      String tipoRegistro, String boleta) {
+    this(nombre, curp, telefono, correo, password, tipoRegistro, boleta, null);
+  }
+
+  public Registration(String nombre, String curp, String telefono, String correo, String password,
+      java.time.LocalDate fechaNacimiento) {
+    this(nombre, curp, telefono, correo, password, "EXTERNO", "", fechaNacimiento);
   }
 
   public boolean ipn() {

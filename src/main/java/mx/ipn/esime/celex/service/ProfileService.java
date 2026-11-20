@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ProfileService {
+  @org.springframework.beans.factory.annotation.Autowired private AgePolicy ages;
   private final Db db;
   private final PasswordEncoder encoder;
   private final Clock clock;
@@ -41,6 +42,9 @@ public class ProfileService {
                 + " i.id_idioma=g.id_idioma WHERE s.id_usuario=? ORDER BY s.id_solicitud DESC",
             user));
     account.put("becas", scholarships.forUser(user));
+    account.put("convocatoriasBeca", scholarships.options(user));
+    account.put("fechaNacimiento", ages.birth(user));
+    account.put("edadValida", ages.eligible(user));
     var priority =
         db.rows(
             "SELECT es_becario FROM prioridades_usuario WHERE id_usuario=? ORDER BY id_prioridad"

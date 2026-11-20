@@ -42,7 +42,9 @@ public class MailService {
     message.setFrom(from);
     message.setTo(to);
     message.setSubject(subject);
-    message.setText(body);
+    message.setText("CELEX ESIME Culhuacán\n" + subject.replace("CELEX · ", "")
+        + "\n\n" + body.strip()
+        + "\n\nDudas y contacto\nCorreo: celex0511@gmail.com\nTeléfono: 5537871513");
     reserve();
     sender.send(message);
   }

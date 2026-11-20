@@ -16,14 +16,6 @@ public class BusinessCalendar {
   }
 
   public LocalDateTime correctionDeadline(LocalDateTime start) {
-    var t = start;
-    int days = 0;
-    while (days < 2) {
-      t = t.plusDays(1);
-      if (t.getDayOfWeek() != DayOfWeek.SATURDAY
-          && t.getDayOfWeek() != DayOfWeek.SUNDAY
-          && !holidays.contains(t.toLocalDate())) days++;
-    }
-    return t;
+    return start.plusHours(48);
   }
 }

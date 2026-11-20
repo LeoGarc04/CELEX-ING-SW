@@ -18,6 +18,8 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 @Controller
 @RequestMapping("/perfil")
 public class ProfileController {
+  @org.springframework.beans.factory.annotation.Autowired private mx.ipn.esime.celex.service.AgePolicy ages;
+  @org.springframework.beans.factory.annotation.Autowired private mx.ipn.esime.celex.service.ScholarshipService scholarships;
   private final ProfileService profiles;
   private final PortalController portal;
 
@@ -62,6 +64,25 @@ public class ProfileController {
     }
     flash.addFlashAttribute("success", "Tus datos se actualizaron.");
     return "redirect:/perfil";
+  }
+
+  @PostMapping("/beca")
+  String scholarship(Authentication a, @RequestParam int convocatoria, RedirectAttributes flash) {
+    try { scholarships.apply(portal.user(a),convocatoria);
+      flash.addFlashAttribute("scholarshipSuccess","Solicitud de beca registrada. El beneficio y la prioridad se aplicarán cuando CELEX la apruebe.");
+    } catch (IllegalArgumentException e) { flash.addFlashAttribute("scholarshipError",e.getMessage()); }
+    return "redirect:/perfil#becas";
+  }
+
+  @PostMapping("/edad")
+  String birth(Authentication a, @RequestParam java.time.LocalDate fechaNacimiento, RedirectAttributes flash) {
+    try {
+      ages.record(portal.user(a), fechaNacimiento);
+      flash.addFlashAttribute("ageSuccess", "Fecha de nacimiento registrada. Ya puedes ingresar a la fila de la convocatoria.");
+    } catch (IllegalArgumentException e) {
+      flash.addFlashAttribute("ageError", e.getMessage());
+    }
+    return "redirect:/perfil#edad";
   }
 
   @PostMapping("/contrasena")

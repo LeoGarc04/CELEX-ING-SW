@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class QueueService {
+  public static final int ACTIVE_SLOTS = 10;
   private final Db db;
   private final Clock clock;
   @org.springframework.beans.factory.annotation.Autowired private CallSettings settings;
@@ -206,6 +207,10 @@ public class QueueService {
             "UPDATE fila_virtual SET posicion_actual=? WHERE id_turno=?",
             position,
             row.get("id_turno"));
+      boolean released = !managed || !now().isBefore(releaseAt(c, row));
+      String state = position <= ACTIVE_SLOTS && released ? "Atendiendo" : "En espera";
+      if (!state.equals(row.get("estado_turno")))
+        db.update("UPDATE fila_virtual SET estado_turno=? WHERE id_turno=?", state, row.get("id_turno"));
       if (managed && !now().isBefore(releaseAt(c, row))) {
         String key = "Número turno · " + call + " · " + row.get("id_usuario");
         if (!assigned.containsKey(key)) {
@@ -287,7 +292,7 @@ public class QueueService {
     return folio;
   }
 
-  private String newFolio() {
+  public String newFolio() {
     String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     var random = new java.security.SecureRandom();
     StringBuilder candidate = new StringBuilder(8);
@@ -318,7 +323,7 @@ public class QueueService {
     order(call);
     t = db.one("SELECT * FROM fila_virtual WHERE folio=? AND id_usuario=?", folio, user);
     if (List.of("En espera", "Atendiendo").contains(t.get("estado_turno"))) {
-      String state = Db.number(t, "posicion_actual") == 1 && ready(t) ? "Atendiendo" : "En espera";
+      String state = Db.number(t, "posicion_actual") >= 1 && Db.number(t, "posicion_actual") <= ACTIVE_SLOTS && ready(t) ? "Atendiendo" : "En espera";
       db.update(
           "UPDATE fila_virtual SET estado_turno=?,reserva_expira_en=? WHERE id_turno=?",
           state,

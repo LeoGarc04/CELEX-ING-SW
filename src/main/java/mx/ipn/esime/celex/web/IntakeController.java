@@ -44,16 +44,23 @@ public class IntakeController {
       @RequestParam String via,
       @RequestParam(defaultValue = "") String modalidad,
       @RequestParam(defaultValue = "") String horario,
+      @RequestParam(defaultValue = "") String nivelExamen,
       jakarta.servlet.http.HttpSession session) {
-    int id = intake.request(portal.user(a), folio, idioma, via, modalidad, horario);
+    int id = intake.request(portal.user(a), folio, idioma, via, modalidad, horario,nivelExamen);
     session.removeAttribute("queue.folio");
     return "redirect:/solicitud/" + id;
   }
 
   @PostMapping("/admin/convocatorias/{id}/habilitar")
   @PreAuthorize("hasAuthority('CONFIGURACION')")
-  String enable(Authentication a, @PathVariable int id) {
-    calls.enable(portal.user(a), id);
+  String enable(Authentication a, @PathVariable int id, RedirectAttributes flash) {
+    flash.addFlashAttribute("callFeedbackId", id);
+    try {
+      calls.enable(portal.user(a), id);
+      flash.addFlashAttribute("callSuccess", "Convocatoria habilitada correctamente.");
+    } catch (IllegalArgumentException e) {
+      flash.addFlashAttribute("callError", e.getMessage());
+    }
     return "redirect:/admin#convocatorias";
   }
 
@@ -63,8 +70,14 @@ public class IntakeController {
       Authentication a,
       @PathVariable int id,
       @RequestParam LocalDateTime inicioClases,
-      @RequestParam int cupoExamen) {
-    settings.configure(portal.user(a), id, inicioClases, cupoExamen);
+      @RequestParam int cupoExamen, RedirectAttributes flash) {
+    flash.addFlashAttribute("callFeedbackId", id);
+    try {
+      settings.configure(portal.user(a), id, inicioClases, cupoExamen);
+      flash.addFlashAttribute("callSuccess", "Configuración académica guardada. Revisa los requisitos para habilitar la convocatoria.");
+    } catch (IllegalArgumentException e) {
+      flash.addFlashAttribute("callError", e.getMessage());
+    }
     return "redirect:/admin#convocatorias";
   }
 
@@ -85,9 +98,16 @@ public class IntakeController {
 
   @PostMapping("/admin/solicitudes/{id}/asignar")
   @PreAuthorize("hasAuthority('FINANCIERO')")
-  String assign(Authentication a, @PathVariable int id, @RequestParam int grupo) {
-    intake.assign(portal.user(a), id, grupo);
+  String assign(Authentication a, @PathVariable int id, @RequestParam int grupo, @RequestParam(defaultValue="") String nivelExamen) {
+    intake.assign(portal.user(a), id, grupo, nivelExamen);
     return "redirect:/admin/solicitudes/" + id;
+  }
+
+  @PostMapping("/admin/solicitudes/{id}/nivel-examen")
+  @PreAuthorize("hasAuthority('FINANCIERO')")
+  String examLevel(Authentication a,@PathVariable int id,@RequestParam String nivelExamen) {
+    intake.examLevel(portal.user(a),id,nivelExamen);
+    return "redirect:/admin/solicitudes/"+id;
   }
 
   @GetMapping("/tramites")
@@ -103,7 +123,7 @@ public class IntakeController {
   String procedure(
       Authentication a,
       @RequestParam String tipo,
-      @RequestParam String referencia,
+      @RequestParam(defaultValue = "") String referencia,
       @RequestParam LocalDate fecha,
       @RequestParam(required = false) MultipartFile pago,
       RedirectAttributes flash)

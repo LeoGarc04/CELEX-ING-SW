@@ -123,6 +123,12 @@ public class AdminController {
                     })
                 .toList()
             : List.of());
+    @SuppressWarnings("unchecked") var scholarshipRequests=(List<Map<String,Object>>)m.asMap().get("requests");
+    for(var request:scholarshipRequests) {
+      var course=db.one("SELECT id_convocatoria,nivel FROM grupos WHERE id_grupo=?",request.get("id_grupo"));
+      request.put("becaDisponible",!"Colocación".equals(course.get("nivel")) && scholarships.eligible(Db.number(request,"id_usuario"),Db.number(course,"id_convocatoria")));
+    }
+    m.addAttribute("scholarshipApplicants",allowed(a,"FINANCIERO")?scholarships.applicants():List.of());
     boolean auditor = allowed(a, "AUDITORIA");
     m.addAttribute("backupEnabled", (auditor || allowed(a, "CONFIGURACION")) && backups.enabled());
     m.addAttribute(
@@ -197,6 +203,8 @@ public class AdminController {
       int id = mx.ipn.esime.celex.repository.Db.number(call, "id_convocatoria");
       call.put("inicioClases", settings.classes(id));
       call.put("cupoExamen", settings.examCapacity(id));
+      call.put("habilitacionError", callManagement.activationIssue(id));
+      call.put("vencida", !java.time.LocalDateTime.now(intakeClock).isBefore(QueueService.time(call.get("fecha_fin_fila"))));
     }
     @SuppressWarnings("unchecked")
     var timedRequests = (List<Map<String, Object>>) m.asMap().get("requests");
@@ -211,6 +219,22 @@ public class AdminController {
               && java.time.LocalDateTime.now(intakeClock).isAfter(deadline)
               && "Pendiente de revisión".equals(request.get("estado_inscripcion")));
     }
+    var sections = new java.util.ArrayList<Map<String,Object>>();
+    for (String key : List.of("pendientes", "aprobadas", "rechazadas")) {
+      var items = timedRequests.stream().filter(request -> {
+        String status = Objects.toString(request.get("estado_inscripcion"), "");
+        String bucket = "Confirmada".equals(status) ? "aprobadas"
+            : List.of("En proceso", "Cancelada", "Rechazada", "Rechazado").contains(status)
+                ? "rechazadas" : "pendientes";
+        return key.equals(bucket);
+      }).toList();
+      sections.add(Map.of("id", key, "nombre", switch (key) {
+        case "aprobadas" -> "Aprobadas";
+        case "rechazadas" -> "Rechazadas";
+        default -> "Pendientes";
+      }, "solicitudes", items));
+    }
+    m.addAttribute("requestSections", sections);
     return "admin";
   }
 
@@ -252,6 +276,15 @@ public class AdminController {
   @PreAuthorize("hasAuthority('ACADEMICO')")
   String language(Authentication a, @RequestParam String nombre) {
     admin.language(portal.user(a), nombre);
+    return "redirect:/admin#oferta";
+  }
+
+  @PostMapping("/examenes")
+  @PreAuthorize("hasAuthority('ACADEMICO')")
+  String exam(Authentication a, @RequestParam int convocatoria, @RequestParam int idioma,
+      @RequestParam String profesor,@RequestParam String aula,@RequestParam String dias,
+      @RequestParam String horario,@RequestParam int cupo) {
+    admin.group(portal.user(a),convocatoria,idioma,"Colocación","Examen de colocación",profesor,aula,dias,horario,cupo);
     return "redirect:/admin#oferta";
   }
 
@@ -394,8 +427,11 @@ public class AdminController {
     var preference = settings.preference(id);
     m.addAttribute("newFlow", !preference.isEmpty());
     m.addAttribute("preference", preference);
+    m.addAttribute("courseStart",preference.get("convocatoria") instanceof Number c?settings.classes(c.intValue()):null);
     m.addAttribute("assigned", settings.assigned(id));
     m.addAttribute("assignable", intake.assignable(id));
+    m.addAttribute("examLevels", intake.examLevels(id));
+    m.addAttribute("examTarget", settings.preference(id).get("nivelSolicitado"));
     return "revision";
   }
 

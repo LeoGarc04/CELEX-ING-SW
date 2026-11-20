@@ -173,6 +173,7 @@ public class TeacherService {
       throw new AccessDeniedException(
           "La lista y las calificaciones se habilitan después del cierre de convocatoria y 48 horas"
               + " antes de clases.");
+    if ("Colocación".equals(g.get("nivel"))) throw new IllegalArgumentException("El resultado y el nivel de colocación se registran desde Resultados de colocación por administración académica.");
     if (grade < 0 || grade > 100)
       throw new IllegalArgumentException("La calificación debe estar entre 0 y 100");
     if (db.rows(

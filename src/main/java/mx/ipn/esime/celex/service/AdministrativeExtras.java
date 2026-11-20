@@ -74,12 +74,11 @@ public class AdministrativeExtras {
       throws Exception {
     var fee = fees(user).get(type);
     if (fee == null) throw new IllegalArgumentException("Trámite inválido.");
+    if (reference == null || reference.isBlank()) reference = "ENVIO-" + UUID.randomUUID();
     if (paid == null
         || paid.isAfter(LocalDate.now(clock))
-        || reference == null
-        || reference.isBlank()
         || reference.length() > 50)
-      throw new IllegalArgumentException("Revisa fecha y referencia.");
+      throw new IllegalArgumentException("Revisa la fecha de pago o solicitud.");
     String key = "";
     if (fee.signum() > 0) {
       if (payment == null || payment.isEmpty())
@@ -126,7 +125,7 @@ public class AdministrativeExtras {
             db.one("SELECT correo FROM usuarios WHERE id_usuario=?", value.get("usuario"))
                 .get("correo");
     mail.send(
-        email, "CELEX · Dictamen de trámite", value.get("tipo") + ": " + status + ". " + note);
+        email, "CELEX · Dictamen de trámite", "Trámite: " + value.get("tipo") + "\nEstado: " + status + "\n\nObservaciones\n" + note);
   }
 
   public boolean cleanable(String action) {

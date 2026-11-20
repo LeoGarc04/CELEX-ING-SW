@@ -90,13 +90,17 @@ public class LivePermissionsFilter extends OncePerRequestFilter {
           boolean read = req.getMethod().equals("GET") || req.getMethod().equals("HEAD");
           boolean ready =
               "Atendiendo".equals(turn.get("estado_turno"))
-                  || Db.number(turn, "posicion_actual") == 1;
+                  || (Db.number(turn, "posicion_actual") >= 1 && Db.number(turn, "posicion_actual") <= mx.ipn.esime.celex.service.QueueService.ACTIVE_SLOTS);
           req.setAttribute("queue.focused", true);
           req.setAttribute("queue.path", queuePath);
           boolean allowed =
               path.startsWith("/css/")
                   || path.startsWith("/js/")
                   || Set.of("/salud", "/error", "/logout").contains(path)
+                  || (((read && path.equals("/perfil"))
+                          || (req.getMethod().equals("POST") && path.equals("/perfil/edad")))
+                      && db.rows("SELECT id_bitacora FROM bitacora_acciones WHERE accion=? LIMIT 1",
+                              "Fecha nacimiento · " + rows.get(0).get("id_usuario")).isEmpty())
                   || (read && (path.equals(queuePath) || path.equals(queuePath + "/oferta")))
                   || (req.getMethod().equals("POST") && path.equals(queuePath + "/latido"))
                   || (ready

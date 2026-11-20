@@ -16,6 +16,7 @@ public class PaymentService {
   private final ReceiptService receipts;
   private final MailService mail;
   private final BusinessCalendar calendar;
+  @org.springframework.beans.factory.annotation.Value("${celex.public-url}") private String publicUrl;
   private final Clock clock;
   private final ScholarshipService scholarships;
   @org.springframework.beans.factory.annotation.Autowired private CallSettings settings;
@@ -60,13 +61,16 @@ public class PaymentService {
     if (s.get("prorroga_expira_en") != null
         && !QueueService.time(s.get("prorroga_expira_en")).isAfter(LocalDateTime.now(clock)))
       throw new IllegalArgumentException("La prórroga venció.");
-    if (reference.isBlank()
-        || reference.length() > 50
+    if (reference == null || reference.isBlank()) reference = "ENVIO-" + UUID.randomUUID();
+    if (reference.length() > 50
         || date.isAfter(LocalDate.now(clock))
         || amount.compareTo((BigDecimal) s.get("monto_calculado")) != 0)
       throw new IllegalArgumentException(
-          "Revisa la referencia, fecha y el importe exacto de la cuota.");
-    boolean paymentOnly = !settings.preference(id).isEmpty();
+          "Revisa la fecha y el importe exacto de la cuota.");
+    var pref=settings.preference(id);
+    if("Colocación".equals(pref.get("via")) && Objects.toString(pref.get("nivelSolicitado"),"").isBlank())
+      throw new IllegalArgumentException("Selecciona el nivel para el que solicitas el examen antes de enviar el pago.");
+    boolean paymentOnly = !pref.isEmpty();
     if (!paymentOnly && (identity == null || identity.isEmpty()))
       throw new IllegalArgumentException("Adjunta identificación.");
     String p = storage.save(payment), i = null;
@@ -134,6 +138,9 @@ public class PaymentService {
       if (!settings.preference(id).isEmpty() && !settings.assigned(id))
         throw new IllegalArgumentException(
             "Asigna el grupo, horario y profesor antes de aprobar la inscripción.");
+      var preference=settings.preference(id);
+      if(preference.containsKey("origenExamen") && settings.classes(((Number)preference.get("convocatoria")).intValue())==null)
+        throw new IllegalArgumentException("Configura el inicio de clases de la convocatoria antes de confirmar el curso.");
       result = "Confirmada";
       db.update(
           "UPDATE solicitudes_inscripcion SET"
@@ -166,15 +173,15 @@ public class PaymentService {
     mail.send(
         email,
         "CELEX · Dictamen de inscripción",
-        "Solicitud "
-            + s.get("folio")
-            + ": "
-            + result
-            + ". "
-            + assessment.observations()
+        "Folio: " + s.get("folio")
+            + "\nEstado: " + result
+            + "\n\nObservaciones\n" + assessment.observations()
             + (assessment.rejected()
-                ? ". Corrige antes de " + calendar.correctionDeadline(now)
-                : ""));
+                ? "\n\nCorrección del comprobante\nTienes 48 horas desde este rechazo para corregir.\nFecha límite: "
+                    + calendar.correctionDeadline(now).format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
+                    + "\n\nAbre tu solicitud para adjuntar la corrección:\n" + publicUrl + "/solicitud/" + id
+                : "\n\nTu inscripción está confirmada.\nDescarga tu comprobante oficial con QR:\n" + publicUrl + "/solicitud/" + id + "/comprobante"
+                    + "\n\nConsulta tu grupo, horario y profesor:\n" + publicUrl + "/solicitud/" + id));
   }
 
   public void scholarship(int admin, int id, String status) {

@@ -14,6 +14,9 @@ import org.springframework.web.multipart.MultipartFile;
 
 @Controller
 public class PortalController {
+  @org.springframework.beans.factory.annotation.Autowired private AgePolicy ages;
+  @org.springframework.beans.factory.annotation.Autowired private ReceiptService receipts;
+  @org.springframework.beans.factory.annotation.Autowired private PlacementService placement;
   private final Db db;
   private final QueueService queue;
   private final EnrollmentService enrollments;
@@ -96,6 +99,7 @@ public class PortalController {
   @PostMapping("/fila")
   String join(
       Authentication a, @RequestParam int convocatoria, jakarta.servlet.http.HttpSession session) {
+    if (!ages.eligible(user(a))) return "redirect:/perfil#edad";
     String folio = queue.join(user(a), convocatoria);
     session.setAttribute("queue.folio", folio);
     return "redirect:/fila/" + folio;
@@ -149,27 +153,15 @@ public class PortalController {
   String groups(Authentication a, @PathVariable String folio, Model m) {
     Integer request = existingRequest(user(a), folio);
     if (request != null) return "redirect:/solicitud/" + request;
+    if (!ages.eligible(user(a))) return "redirect:/perfil#edad";
     var turn = queue.heartbeat(user(a), folio);
     if (!"Atendiendo".equals(turn.get("estado_turno")))
       throw new IllegalArgumentException("Espera a que llegue tu turno.");
     m.addAttribute("turn", turn);
     m.addAttribute("queueFocused", true);
     m.addAttribute("focusedQueueLink", "/fila/" + folio);
-    var offers = enrollments.offers(user(a), Db.number(turn, "id_convocatoria"));
-    m.addAttribute("groups", offers);
-    if (settings.managed(Db.number(turn, "id_convocatoria"))) {
-      m.addAttribute("options", intake.options(user(a), Db.number(turn, "id_convocatoria")));
-      return "preferencias";
-    }
-    m.addAttribute(
-        "availableLanguages",
-        offers.stream()
-            .map(g -> g.get("idioma"))
-            .distinct()
-            .sorted()
-            .map(name -> java.util.Map.of("nombre", name))
-            .toList());
-    return "grupos";
+    m.addAttribute("options", intake.options(user(a), Db.number(turn, "id_convocatoria")));
+    return "preferencias";
   }
 
   @GetMapping("/fila/{folio}/oferta")
@@ -230,9 +222,11 @@ public class PortalController {
     var preference = settings.preference(id);
     if (!preference.isEmpty()) {
       m.addAttribute("preference", preference);
+      if("Colocación".equals(preference.get("via"))) m.addAttribute("placement",placement.view(id,user(a)));
       m.addAttribute("assignment", settings.assignment(id));
       @SuppressWarnings("unchecked")
       var current = (Map<String, Object>) m.asMap().get("request");
+      m.addAttribute("classStart",settings.classes(Db.number(current,"id_convocatoria")));
       m.addAttribute(
           "reviewDeadline",
           current.get("fecha_envio") == null
@@ -247,7 +241,7 @@ public class PortalController {
   String upload(
       Authentication a,
       @PathVariable int id,
-      @RequestParam String referencia,
+      @RequestParam(defaultValue = "") String referencia,
       @RequestParam LocalDate fecha,
       @RequestParam BigDecimal importe,
       @RequestParam MultipartFile pago,
@@ -309,6 +303,10 @@ public class PortalController {
 
   @GetMapping("/solicitud/{id}/comprobante")
   ResponseEntity<byte[]> receipt(Authentication a, @PathVariable int id) throws Exception {
+    try { receipts.refreshForOwner(id,user(a)); }
+    catch (IllegalArgumentException e) {
+      return ResponseEntity.status(HttpStatus.CONFLICT).contentType(MediaType.TEXT_PLAIN).body(e.getMessage().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
     var r =
         db.one(
             "SELECT c.url_pdf FROM comprobantes_oficiales c JOIN solicitudes_inscripcion s ON"

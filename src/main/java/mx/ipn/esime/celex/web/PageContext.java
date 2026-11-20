@@ -37,8 +37,8 @@ public class PageContext {
         "focusedQueueLink", Objects.toString(request.getAttribute("queue.path"), "/panel"));
     m.addAttribute("publicTesting", publicTesting);
     var contact = new java.util.HashMap<String, Object>(settings.read("Contacto CELEX"));
-    contact.putIfAbsent("telefono", "");
-    contact.putIfAbsent("correo", "");
+    contact.putIfAbsent("telefono", "5537871513");
+    contact.putIfAbsent("correo", "celex0511@gmail.com");
     m.addAttribute(
         "contactConfigured",
         !contact.get("telefono").toString().isBlank()

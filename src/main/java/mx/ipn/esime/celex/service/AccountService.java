@@ -18,6 +18,7 @@ public class AccountService {
   private final MailService mail;
   private final Clock clock;
   private final Set<String> domains;
+  @org.springframework.beans.factory.annotation.Autowired private AgePolicy ages;
   private final SecureRandom random = new SecureRandom();
 
   public AccountService(
@@ -67,6 +68,7 @@ public class AccountService {
   @Transactional
   public void register(Registration r) {
     validatePassword(r.password());
+    ages.validate(r.fechaNacimiento());
     if (!r.isDocumentoValido())
       throw new IllegalArgumentException(
           "Selecciona tu tipo de registro e ingresa una boleta de 10 dígitos para IPN o una CURP"
@@ -96,6 +98,7 @@ public class AccountService {
     account.setEstadoCuenta("Inactiva");
     account.setIntentosFallidos(0);
     int id = users.saveAndFlush(account).getIdUsuario();
+    ages.record(id, r.fechaNacimiento());
     issue(id, normalize(r.correo()), "Activacion");
     db.audit(id, "Registro de cuenta", "Cuenta pendiente de verificación");
   }
@@ -118,7 +121,7 @@ public class AccountService {
     mail.send(
         email,
         "CELEX · Código de " + type,
-        "Tu código es: " + code + ". Caduca en 15 minutos. No lo compartas.");
+        "Código de " + type + ":\n\n" + code + "\n\nVigencia: 15 minutos.\nNo compartas este código.");
   }
 
   @Transactional

@@ -327,7 +327,7 @@ class MySqlWorkflowTest extends WorkflowTest {
               "nueva@alumno.ipn.mx",
               "Clave123",
               "IPN",
-              "2026123456"));
+              "2026123456", java.time.LocalDate.now().minusYears(20)));
       org.junit.jupiter.api.Assertions.assertEquals(2, db.rows("SELECT * FROM usuarios").size());
     } finally {
       var column =

@@ -32,6 +32,17 @@ chmod +x mvnw
 
 Las pruebas generales usan una base H2 aislada y correo simulado; no necesitan las credenciales de la base real. No activar el perfil `test` para usar el sistema normalmente.
 
+## Actualizar una instalación existente
+
+El procedimiento de instalación y los requisitos técnicos se conservan. Esta actualización no agrega tablas, columnas, dependencias externas ni variables de configuración obligatorias.
+
+1. Detén CELEX y conserva un respaldo privado de la base y de los documentos.
+2. Desde el repositorio ejecuta `git pull --ff-only`. Si hay cambios locales o una divergencia, consérvalos y resuélvelos antes de actualizar; no los sobrescribas.
+3. Compila de nuevo con `./mvnw clean package` o `.\mvnw.cmd clean package` en Windows.
+4. Inicia con el mismo comando de Java y tu archivo `application-local.properties` existente.
+
+No vuelvas a crear la base ni ejecutes el esquema inicial sobre información existente. La única migración previa sigue siendo la de boleta para bases antiguas que aún no la tengan.
+
 ## Crear una base vacía
 
 Conéctate desde MySQL Workbench o el cliente MySQL. Ejecuta esto únicamente si no existe la base:

@@ -21,6 +21,7 @@
           </select></label>
           <div data-identifier="IPN"><label>Número de boleta<input class="input" name="boleta" type="text" inputmode="numeric" pattern="[0-9]{10}" minlength="10" maxlength="10" th:value="*{boleta}" autocomplete="off" aria-describedby="boletaHelp"></label><small id="boletaHelp" class="muted">Ingresa los 10 dígitos de tu boleta.</small></div>
           <div data-identifier="EXTERNO"><label>CURP<input class="input" name="curp" minlength="18" maxlength="18" th:value="*{curp}" autocomplete="off" aria-describedby="curpHelp"></label><small id="curpHelp" class="muted">Ingresa los 18 caracteres de tu CURP en mayúsculas.</small></div>
+          <label>Fecha de nacimiento<input class="input" name="fechaNacimiento" type="date" th:value="*{fechaNacimiento}" autocomplete="bday" required></label><small class="muted">Para ingresar al curso debes tener al menos 15 años cumplidos.</small>
           <label>Teléfono<input class="input" name="telefono" type="tel" required maxlength="15" th:value="*{telefono}" autocomplete="tel"></label>
           <div class="notice ok"><b>Prioridad y Clasificación</b><p>En caso de ser alumno del IPN, usa tu correo institucional <b>@alumno.ipn.mx</b>.</p><p>De lo contrario, usa tu correo personal para público en general.</p></div>
           <small class="notice error" th:if="${#fields.hasErrors('telefono')}" th:errors="*{telefono}"></small><label>Correo electrónico<input class="input" name="correo" type="email" required maxlength="100" th:value="*{correo}" autocomplete="email"></label>

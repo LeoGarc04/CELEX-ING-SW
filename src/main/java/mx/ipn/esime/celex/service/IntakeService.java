@@ -41,6 +41,7 @@ public class IntakeService {
       int id = Db.number(language, "id_idioma");
       var route = routes.route(user, id);
       language.putAll(route);
+      language.put("nivelesExamen",routes.examLevels(id));
       var exam =
           db.rows(
               "SELECT cupo_disponible FROM grupos WHERE id_convocatoria=? AND id_idioma=? AND"
@@ -64,20 +65,24 @@ public class IntakeService {
   }
 
   @Transactional
+  public int request(int user,String folio,int language,String route,String modality,String preferredTime) {
+    return request(user,folio,language,route,modality,preferredTime,"");
+  }
+
+  @Transactional
   public int request(
-      int user, String folio, int language, String route, String modality, String preferredTime) {
+      int user, String folio, int language, String route, String modality, String preferredTime, String requestedLevel) {
     var turn = db.one("SELECT * FROM fila_virtual WHERE folio=? AND id_usuario=?", folio, user);
     int call = Db.number(turn, "id_convocatoria");
     queue.lock(call);
     var previous = db.rows("SELECT id_solicitud FROM solicitudes_inscripcion WHERE folio=?", folio);
     if (!previous.isEmpty()) return Db.number(previous.get(0), "id_solicitud");
-    if (!settings.managed(call))
-      throw new IllegalArgumentException("Esta convocatoria usa el proceso anterior.");
     if (options(user, call).stream().noneMatch(l -> Db.number(l, "id_idioma") == language))
       throw new IllegalArgumentException("Idioma no ofertado en esta convocatoria.");
     var allowed = routes.route(user, language);
     int group;
     if ("Colocación".equals(route)) {
+      if (!routes.examLevels(language).contains(requestedLevel)) throw new IllegalArgumentException("Selecciona el nivel para el que deseas realizar el examen, hasta Avanzado 1.");
       var existing =
           db.rows(
               "SELECT id_grupo FROM grupos WHERE id_convocatoria=? AND id_idioma=? AND"
@@ -119,7 +124,8 @@ public class IntakeService {
     var current = settings.preference(request);
     if (current.isEmpty()) {
       var preference = new LinkedHashMap<String, Object>();
-      preference.put("version", 2);
+      preference.put("version", 3);
+      if ("Colocación".equals(route)) preference.put("nivelSolicitado",requestedLevel);
       preference.put("idioma", language);
       preference.put("via", route);
       preference.put("nivel", "Colocación".equals(route) ? "Colocación" : allowed.get("nivel"));
@@ -150,8 +156,29 @@ public class IntakeService {
         preference.get("horario"));
   }
 
+  public List<String> examLevels(int request) {
+    var row=db.one("SELECT g.id_idioma FROM solicitudes_inscripcion s JOIN grupos g ON g.id_grupo=s.id_grupo WHERE s.id_solicitud=?",request);
+    return routes.levels(Db.number(row,"id_idioma"));
+  }
+
   @Transactional
-  public void assign(int actor, int request, int chosen) {
+  public void examLevel(int actor,int request,String level) {
+    var chosen=settings.preference(request).get("nivelSolicitado");
+    if (chosen==null || !chosen.equals(level))
+      throw new IllegalArgumentException("El nivel solicitado del examen lo selecciona el alumno. Administración registra el nivel asignado al publicar el resultado.");
+    var row=db.one("SELECT g.nivel,g.id_idioma FROM solicitudes_inscripcion s JOIN grupos g ON g.id_grupo=s.id_grupo WHERE s.id_solicitud=? FOR UPDATE",request);
+    if (!"Colocación".equals(row.get("nivel")) || level==null || !routes.levels(Db.number(row,"id_idioma")).contains(level))
+      throw new IllegalArgumentException("Selecciona el nivel del idioma al que aplicará el examen.");
+    settings.write(actor,"Nivel examen · "+request,Map.of("nivel",level));
+  }
+
+  @Transactional
+  public void assign(int actor,int request,int chosen) {
+    assign(actor,request,chosen,"");
+  }
+
+  @Transactional
+  public void assign(int actor, int request, int chosen, String examLevel) {
     var initial =
         db.one(
             "SELECT s.*,g.id_convocatoria FROM solicitudes_inscripcion s JOIN grupos g ON"
@@ -165,6 +192,11 @@ public class IntakeService {
       throw new IllegalArgumentException("Primero el usuario debe enviar el pago a revisión.");
     if (assignable(request).stream().noneMatch(g -> Db.number(g, "id_grupo") == chosen))
       throw new IllegalArgumentException("Grupo no compatible con el idioma y nivel solicitado.");
+    if ("Colocación".equals(settings.preference(request).get("via"))) {
+      String requested=Objects.toString(settings.preference(request).get("nivelSolicitado"),"");
+      if(!examLevel.isBlank() && !examLevel.equals(requested)) throw new IllegalArgumentException("No puedes cambiar el nivel solicitado por el alumno.");
+      examLevel(actor,request,requested);
+    }
     int old = Db.number(row, "id_grupo");
     db.rows(
         "SELECT * FROM grupos WHERE id_grupo IN (?,?) ORDER BY id_grupo FOR UPDATE", old, chosen);
