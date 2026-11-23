@@ -1,0 +1,28 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "CELEX: compilar",
+      "type": "process",
+      "command": "${workspaceFolder}/mvnw",
+      "args": [
+        "-q",
+        "-DskipTests",
+        "package"
+      ],
+      "windows": {
+        "command": "${workspaceFolder}\\mvnw.cmd"
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    }
+  ]
+}

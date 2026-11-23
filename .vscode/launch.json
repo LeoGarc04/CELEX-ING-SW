@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "CELEX · Publicar en internet (Mac)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "exec /usr/bin/python3 scripts/publicar_pruebas.py",
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "CELEX: compilar"
+    },
+    {
+      "name": "CELEX · Ejecutar y depurar localmente",
+      "type": "java",
+      "request": "launch",
+      "mainClass": "mx.ipn.esime.celex.CelexApplication",
+      "projectName": "celex",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--spring.profiles.active=local",
+        "--spring.config.additional-location=file:${workspaceFolder}/application-local.properties"
+      ],
+      "console": "integratedTerminal",
+      "shortenCommandLine": "auto"
+    }
+  ]
+}

@@ -85,6 +85,15 @@ Control+C detiene la aplicación y conserva la información en MySQL y en la car
 
 En macOS también puedes usar el asistente `python3 scripts/arrancar_local.py`; requiere el cliente MySQL instalado en `/usr/local/mysql/bin`. Los asistentes de inicio, reinicio y publicación fueron preparados para macOS. La ruta manual de Java anterior permite ejecutar la aplicación en Windows y Linux.
 
+## Ejecutar desde Visual Studio Code
+
+Abre la carpeta raíz `CELEX-ING-SW` y entra en **Ejecutar y depurar** (el icono de triángulo con un insecto). Las configuraciones ya están incluidas:
+
+- **CELEX · Publicar en internet (Mac):** pulsa el triángulo verde o F5. Compila el proyecto sin repetir la suite de pruebas, inicia el servidor real con su configuración local y abre el enlace temporal de Cloudflare. Requiere la configuración privada, MySQL encendido y `.tools/cloudflared`, como el asistente de publicación habitual. Cierra cualquier publicación anterior antes de iniciarla.
+- **CELEX · Ejecutar y depurar localmente:** inicia Spring Boot con la configuración privada y permite usar puntos de interrupción. Requiere Extension Pack for Java de Microsoft. Abre `http://localhost:8080/login`; esta opción no crea un enlace público.
+
+No necesitas escribir comandos. VS Code muestra los mensajes en su terminal integrada. El botón Detener termina la ejecución iniciada desde VS Code. La publicación pública sigue requiriendo el equipo encendido y conexión a internet.
+
 ## Primer administrador
 
 1. Registra y verifica tu cuenta desde la página. Las cuentas nuevas empiezan como Usuario.
